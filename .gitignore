@@ -1,0 +1,121 @@
+# ============================================
+# CADLift - Production .gitignore
+# ============================================
+
+# -------------------- Logs --------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -------------------- Dependencies --------------------
+node_modules/
+.pnpm-store/
+
+# -------------------- Build outputs --------------------
+dist/
+dist-ssr/
+build/
+*.local
+
+# -------------------- Environment & Secrets --------------------
+.env
+.env.*
+*.env
+*.env.*
+!.env.example
+!.env.sample
+
+# -------------------- Python --------------------
+.venv/
+venv/
+ENV/
+*.py[cod]
+*$py.class
+__pycache__/
+*.so
+.Python
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Python testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Python linting/typing
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# Python packaging
+*.egg-info/
+*.egg
+MANIFEST
+*.whl
+
+# -------------------- Caches --------------------
+.cache/
+.claude/
+.local/
+*.cache
+
+# -------------------- AI Model Caches --------------------
+shap_e_model_cache/
+backend/shap_e_model_cache/
+vendor/*/pretrained_weights/
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# -------------------- Storage & Database --------------------
+storage/
+*.db
+*.sqlite
+*.sqlite3
+cadlift.db
+backend/cadlift.db
+
+# -------------------- Test artifacts --------------------
+test_outputs/
+backend/test_outputs/
+test-results/
+playwright-report/
+coverage/
+*.stl
+*.ply
+
+# -------------------- Editor & IDE --------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Windows
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+nul
+
+# -------------------- Misc --------------------
+*.bak
+*.tmp
+*.temp
+.npmrc
+
+# Local-only: dev credentials and client drawings
+user.md
+*.pdf

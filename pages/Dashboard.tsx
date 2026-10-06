@@ -1,0 +1,699 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import UploadForm from '../components/UploadForm';
+import JobStatusComponent from '../components/JobStatus';
+import { UploadFormData, ConversionMode, JobStatus as JobState } from '../types';
+import { jobService, JobRecord } from '../services/jobService';
+import { useJobHistory } from '../hooks/useJobHistory';
+import QuickStart from '../components/QuickStart';
+import ImageWorkflowForm from '../components/ImageWorkflowForm';
+import PromptWorkflowForm from '../components/PromptWorkflowForm';
+import OnboardingTips from '../components/OnboardingTips';
+import LockedFeatureOverlay, { isDemoMode } from '../components/LockedFeatureOverlay';
+import {
+  ArrowRight,
+  Layers3,
+  Image as ImageIcon,
+  MessageSquare,
+  Download,
+  Eye,
+  RefreshCw,
+  Terminal,
+  Sparkles,
+  CircleDot,
+  ClipboardList,
+  FileText,
+  LogOut,
+} from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { env } from '../config/env';
+
+type WorkflowTab = 'dxf' | 'image' | 'prompt';
+
+const Dashboard: React.FC = () => {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { user, signOut } = useAuth();
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+  const [presetMode, setPresetMode] = useState<ConversionMode | null>(null);
+  const [presetModeSignal, setPresetModeSignal] = useState(0);
+  const uploadSectionRef = useRef<HTMLDivElement>(null);
+  const jobStatusRef = useRef<HTMLDivElement>(null);
+  const { jobs: jobHistory } = useJobHistory();
+  const [activeTab, setActiveTab] = useState<WorkflowTab>('prompt');
+  const [submitProgress, setSubmitProgress] = useState<number | null>(null);
+  const [quickStartOpen, setQuickStartOpen] = useState(false);
+  const [showTips, setShowTips] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem('cadlift_tips_dismissed') !== 'true';
+  });
+
+  const handleLaunchWorkspace = (mode?: ConversionMode) => {
+    if (mode) {
+      setPresetMode(mode);
+      setPresetModeSignal((prev) => prev + 1);
+    }
+    if (uploadSectionRef.current) {
+      uploadSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (event: KeyboardEvent) => {
+      const key = event.key.toLowerCase();
+      if (event.ctrlKey && key === 'u') {
+        event.preventDefault();
+        handleLaunchWorkspace();
+      }
+      if (event.ctrlKey && key === 'l') {
+        event.preventDefault();
+        handleLaunchWorkspace(ConversionMode.MECHANICAL);
+      }
+      if (event.ctrlKey && key === 'i') {
+        event.preventDefault();
+        setActiveTab('image');
+        handleLaunchWorkspace();
+      }
+      if (event.ctrlKey && key === 'p') {
+        event.preventDefault();
+        setActiveTab('prompt');
+        handleLaunchWorkspace();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const dismissTips = () => {
+    setShowTips(false);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('cadlift_tips_dismissed', 'true');
+    }
+  };
+
+  const heroStats = useMemo(() => {
+    const completedJobs = jobHistory.filter((job) => job.status === JobState.COMPLETED);
+    const avgSeconds = completedJobs.length
+      ? Math.max(
+        1,
+        Math.round(
+          completedJobs.reduce((acc, job) => acc + ((job.completedAt ?? job.updatedAt) - job.createdAt), 0) /
+          completedJobs.length /
+          1000
+        )
+      )
+      : 12;
+    const detectionRate = jobHistory.length
+      ? Math.min(99, Math.round((completedJobs.length / jobHistory.length) * 100))
+      : 0;
+
+    return [
+      { label: t('dashboard.hero.statUploads'), value: jobHistory.length.toString() },
+      { label: t('dashboard.hero.statTime'), value: `${avgSeconds}s` },
+      { label: t('dashboard.hero.statAccuracy'), value: `${detectionRate}%` },
+    ];
+  }, [jobHistory, t]);
+
+  const conversionCards = useMemo(() => ([
+    {
+      id: 'cad',
+      title: t('dashboard.modes.cad.title'),
+      description: t('dashboard.modes.cad.description'),
+      tag: t('dashboard.modes.cad.badge'),
+      icon: <Layers3 className="w-8 h-8" />,
+      gradient: 'from-primary-500 to-blue-500',
+      cta: t('dashboard.modes.cad.cta'),
+      action: () => handleLaunchWorkspace(ConversionMode.FLOOR_PLAN),
+      comingSoon: false,
+      extra: (
+        <div className="flex flex-wrap gap-2">
+          {['DXF', 'DWG'].map((format) => (
+            <span key={format} className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600">
+              {format}
+            </span>
+          ))}
+        </div>
+      ),
+    },
+    {
+      id: 'image',
+      title: t('dashboard.modes.image.title'),
+      description: t('dashboard.modes.image.description'),
+      tag: t('dashboard.modes.betaLabel'),
+      icon: <ImageIcon className="w-8 h-8" />,
+      gradient: 'from-purple-500 to-pink-500',
+      cta: t('dashboard.modes.image.cta'),
+      action: () => { setActiveTab('image'); handleLaunchWorkspace(); },
+      comingSoon: false,
+      extra: (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('dashboard.modes.image.optionsLabel')}</p>
+          <div className="flex flex-wrap gap-2">
+            {[t('dashboard.modes.image.option2d'), t('dashboard.modes.image.option3d')].map((option) => (
+              <span key={option} className="px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600">
+                {option}
+              </span>
+            ))}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'prompt',
+      title: t('dashboard.modes.prompt.title'),
+      description: t('dashboard.modes.prompt.description'),
+      tag: t('dashboard.modes.betaLabel'),
+      icon: <MessageSquare className="w-8 h-8" />,
+      gradient: 'from-amber-500 to-orange-500',
+      cta: t('dashboard.modes.prompt.cta'),
+      action: () => { setActiveTab('prompt'); handleLaunchWorkspace(); },
+      comingSoon: false,
+      extra: (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t('dashboard.modes.prompt.examplesLabel')}</p>
+          {[t('dashboard.modes.prompt.exampleOne'), t('dashboard.modes.prompt.exampleTwo')].map((example) => (
+            <div key={example} className="flex items-center gap-2 text-slate-600 dark:text-slate-300 text-sm bg-slate-100 dark:bg-slate-700/50 rounded-xl px-3 py-2">
+              <CircleDot className="w-3 h-3" />
+              <span>{example}</span>
+            </div>
+          ))}
+        </div>
+      ),
+    }
+  ]), [t]);
+
+  const recentJobs = useMemo<JobRecord[]>(() => jobHistory.slice(0, 10), [jobHistory]);
+
+  const statusStyles: Record<JobState, { bg: string; dot: string; text: string }> = {
+    [JobState.COMPLETED]: {
+      bg: 'bg-green-50 dark:bg-green-900/20',
+      dot: 'bg-green-500',
+      text: 'text-green-600 dark:text-green-400'
+    },
+    [JobState.PROCESSING]: {
+      bg: 'bg-amber-50 dark:bg-amber-900/20',
+      dot: 'bg-amber-500',
+      text: 'text-amber-600 dark:text-amber-400'
+    },
+    [JobState.PENDING]: {
+      bg: 'bg-slate-100 dark:bg-slate-800/60',
+      dot: 'bg-slate-400',
+      text: 'text-slate-600 dark:text-slate-300'
+    },
+    [JobState.FAILED]: {
+      bg: 'bg-red-50 dark:bg-red-900/20',
+      dot: 'bg-red-500',
+      text: 'text-red-600 dark:text-red-400'
+    },
+    [JobState.QUEUED]: {
+      bg: 'bg-slate-50 dark:bg-slate-800/40',
+      dot: 'bg-slate-400',
+      text: 'text-slate-600 dark:text-slate-300'
+    },
+    [JobState.CANCELLED]: {
+      bg: 'bg-orange-50 dark:bg-orange-900/20',
+      dot: 'bg-orange-500',
+      text: 'text-orange-600 dark:text-orange-400'
+    },
+  };
+
+  const statusLabels: Record<JobState, string> = {
+    [JobState.COMPLETED]: t('common.status_completed'),
+    [JobState.PROCESSING]: t('common.status_processing'),
+    [JobState.PENDING]: t('common.status_pending'),
+    [JobState.FAILED]: t('common.status_failed'),
+    [JobState.QUEUED]: t('common.status_queued'),
+    [JobState.CANCELLED]: t('common.status_cancelled'),
+  };
+
+  const jobIntentLabel = (job: JobRecord) => {
+    if (job.intent === 'image') return t('dashboard.modes.image.title');
+    if (job.intent === 'prompt') return t('dashboard.modes.prompt.title');
+    return t('dashboard.modes.cad.title');
+  };
+
+  const jobInputPreview = (job: JobRecord) => {
+    const prompt = job.metadata && typeof job.metadata.prompt === 'string' ? job.metadata.prompt : null;
+    if (prompt) {
+      return `"${prompt.slice(0, 24)}${prompt.length > 24 ? '…' : ''}"`;
+    }
+    return job.inputName;
+  };
+
+  const jobModeLabel = (job: JobRecord) => {
+    switch (job.mode) {
+      case ConversionMode.FLOOR_PLAN:
+        return t('common.mode_floor');
+      case ConversionMode.MECHANICAL:
+        return t('common.mode_mech');
+      case ConversionMode.IMAGE_TO_2D:
+        return t('dashboard.imageForm.option2d.title');
+      case ConversionMode.IMAGE_TO_3D:
+        return t('dashboard.imageForm.option3d.title');
+      case ConversionMode.PROMPT_TO_2D:
+        return t('dashboard.promptForm.option2d.title');
+      case ConversionMode.PROMPT_TO_3D:
+        return t('dashboard.promptForm.option3d.title');
+      default:
+        return '';
+    }
+  };
+
+  const handleJobSubmit = async (formData: UploadFormData) => {
+    const job = await jobService.createJob(formData);
+    setCurrentJobId(job.job_id);
+    setPresetMode(null);
+    setQuickStartOpen(false);
+    setSubmitProgress(0);
+    if (jobStatusRef.current) {
+      jobStatusRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const resetJob = () => {
+    setCurrentJobId(null);
+  };
+
+  const renderActions = (job: JobRecord) => {
+    if (job.status === JobState.COMPLETED) {
+      const glbUrl = job.glb_download_url;
+      const dxfUrl = job.dxf_download_url || job.download_url;
+      const stepUrl = job.step_download_url;
+
+      return (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* View 3D button */}
+          {glbUrl && (
+            <button
+              onClick={() => {
+                setCurrentJobId(job.job_id);
+                if (jobStatusRef.current) {
+                  jobStatusRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-primary-600 dark:text-primary-400 bg-primary-50 dark:bg-primary-900/30 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50 transition-colors"
+              title="View in 3D"
+            >
+              <Eye size={14} />
+              3D
+            </button>
+          )}
+          {/* Download buttons */}
+          {glbUrl && (
+            <a
+              href={glbUrl}
+              download
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors"
+              title="Download GLB"
+            >
+              <Download size={14} />
+              GLB
+            </a>
+          )}
+          {dxfUrl && (
+            <a
+              href={dxfUrl}
+              download
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+              title="Download DXF"
+            >
+              <Download size={14} />
+              DXF
+            </a>
+          )}
+          {stepUrl && (
+            <a
+              href={stepUrl}
+              download
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-semibold text-purple-600 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/30 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors"
+              title="Download STEP"
+            >
+              <Download size={14} />
+              STEP
+            </a>
+          )}
+        </div>
+      );
+    }
+    if (job.status === JobState.FAILED) {
+      return (
+        <button
+          type="button"
+          className="flex items-center gap-1 text-sm font-semibold text-red-500 hover:text-red-400 transition-colors"
+        >
+          <RefreshCw size={16} />
+          {t('dashboard.recent.action.retry')}
+        </button>
+      );
+    }
+    // Processing/Pending - show progress
+    const progress = (job as JobRecord & { progress?: number }).progress ?? 0;
+    return (
+      <div className="flex items-center gap-2">
+        <div className="w-20 h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary-500 rounded-full transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="text-xs font-semibold text-slate-500">{progress}%</span>
+      </div>
+    );
+  };
+
+  const formatTimestamp = (timestamp: number) => {
+    const date = new Date(timestamp);
+    return date.toLocaleString(undefined, {
+      day: '2-digit',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  return (
+    <div className="w-full max-w-7xl mx-auto space-y-10 animate-fade-in">
+      {/* === NEW CREATIVE HERO SECTION === */}
+      <section className="relative rounded-[2rem] overflow-hidden">
+        {/* Animated gradient background - Light/Dark mode */}
+        <div className="absolute inset-0 bg-gradient-to-br from-primary-500 via-cyan-500 to-teal-600 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950" />
+
+        {/* Animated mesh overlay */}
+        <div className="absolute inset-0 opacity-40 dark:opacity-30">
+          <div className="absolute top-0 left-0 w-96 h-96 bg-white/40 dark:bg-primary-500/20 rounded-full blur-[100px] animate-blob" />
+          <div className="absolute bottom-0 right-0 w-80 h-80 bg-yellow-200/40 dark:bg-cyan-500/20 rounded-full blur-[100px] animate-blob animation-delay-2000" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-emerald-200/30 dark:bg-teal-500/15 rounded-full blur-[80px] animate-blob animation-delay-4000" />
+        </div>
+
+        {/* Grid pattern overlay */}
+        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.1)_1px,transparent_1px)] dark:bg-[linear-gradient(rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:40px_40px]" />
+
+        {/* Content */}
+        <div className="relative z-10 p-8 md:p-10">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
+
+            {/* Left: Welcome & User Info */}
+            <div className="flex-1 space-y-6">
+              {/* Greeting with animated badge */}
+              <div className="space-y-3">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/10">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                  </span>
+                  <span className="text-xs font-semibold text-white uppercase tracking-widest">{t('dashboard.hero.tagline')}</span>
+                </div>
+
+                <h1 className="text-4xl md:text-5xl font-black text-white leading-tight">
+                  {jobHistory.length > 0 ? t('dashboard.hero.greeting') : t('dashboard.hero.newUser')}
+                  {user && (
+                    <span className="block text-2xl md:text-3xl font-bold mt-2 text-primary-200 dark:text-primary-400">
+                      {user.display_name}
+                    </span>
+                  )}
+                </h1>
+              </div>
+
+              {/* Quick action buttons */}
+              <div className="flex flex-wrap gap-3">
+                <button
+                  onClick={() => handleLaunchWorkspace()}
+                  className="group flex items-center gap-2 px-6 py-3 rounded-xl bg-white text-slate-900 font-bold text-sm shadow-xl hover:shadow-2xl hover:scale-105 transition-all"
+                >
+                  <Sparkles size={18} className="text-primary-500" />
+                  {t('dashboard.hero.createNew')}
+                  <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+                </button>
+                <button
+                  onClick={() => navigate('/profile')}
+                  className="flex items-center gap-2 px-6 py-3 rounded-xl bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/20 text-white font-semibold text-sm hover:bg-white/30 dark:hover:bg-white/20 transition-all"
+                >
+                  {t('dashboard.hero.viewProjects')}
+                </button>
+              </div>
+            </div>
+
+            {/* Right: Stats Cards */}
+            <div className="grid grid-cols-2 gap-3 lg:w-auto">
+              {/* Total Conversions */}
+              <div className="relative group p-5 rounded-2xl bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-white/15 hover:border-white/40 dark:hover:border-white/20 transition-all overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-white/20 dark:bg-primary-500/20 rounded-full blur-2xl group-hover:bg-white/30 dark:group-hover:bg-primary-500/30 transition-colors" />
+                <div className="relative">
+                  <p className="text-3xl font-black text-white">{jobHistory.length}</p>
+                  <p className="text-xs font-medium text-white/80 dark:text-white/60 uppercase tracking-wider mt-1">{t('dashboard.hero.stats.conversions')}</p>
+                </div>
+              </div>
+
+              {/* This Week */}
+              <div className="relative group p-5 rounded-2xl bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-white/15 hover:border-white/40 dark:hover:border-white/20 transition-all overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-white/20 dark:bg-purple-500/20 rounded-full blur-2xl group-hover:bg-white/30 dark:group-hover:bg-purple-500/30 transition-colors" />
+                <div className="relative">
+                  <p className="text-3xl font-black text-white">
+                    {jobHistory.filter(j => {
+                      const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+                      return j.createdAt > weekAgo;
+                    }).length}
+                  </p>
+                  <p className="text-xs font-medium text-white/80 dark:text-white/60 uppercase tracking-wider mt-1">{t('dashboard.hero.stats.thisWeek')}</p>
+                </div>
+              </div>
+
+              {/* Success Rate */}
+              <div className="relative group p-5 rounded-2xl bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-white/15 hover:border-white/40 dark:hover:border-white/20 transition-all overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-white/20 dark:bg-emerald-500/20 rounded-full blur-2xl group-hover:bg-white/30 dark:group-hover:bg-emerald-500/30 transition-colors" />
+                <div className="relative">
+                  <p className="text-3xl font-black text-white">
+                    {jobHistory.length > 0
+                      ? Math.round((jobHistory.filter(j => j.status === JobState.COMPLETED).length / jobHistory.length) * 100)
+                      : 0}%
+                  </p>
+                  <p className="text-xs font-medium text-white/80 dark:text-white/60 uppercase tracking-wider mt-1">{t('dashboard.hero.stats.successRate')}</p>
+                </div>
+              </div>
+
+              {/* Avg Time */}
+              <div className="relative group p-5 rounded-2xl bg-white/20 dark:bg-white/10 backdrop-blur-sm border border-white/30 dark:border-white/10 hover:bg-white/30 dark:hover:bg-white/15 hover:border-white/40 dark:hover:border-white/20 transition-all overflow-hidden">
+                <div className="absolute top-0 right-0 w-16 h-16 bg-white/20 dark:bg-amber-500/20 rounded-full blur-2xl group-hover:bg-white/30 dark:group-hover:bg-amber-500/30 transition-colors" />
+                <div className="relative">
+                  <p className="text-3xl font-black text-white">
+                    {(() => {
+                      const completed = jobHistory.filter(j => j.status === JobState.COMPLETED);
+                      if (completed.length === 0) return '0s';
+                      const avg = Math.round(completed.reduce((acc, j) => acc + ((j.completedAt ?? j.updatedAt) - j.createdAt), 0) / completed.length / 1000);
+                      return `${avg}s`;
+                    })()}
+                  </p>
+                  <p className="text-xs font-medium text-white/80 dark:text-white/60 uppercase tracking-wider mt-1">{t('dashboard.hero.stats.avgTime')}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Empty state message for new users */}
+          {jobHistory.length === 0 && (
+            <div className="mt-8 p-6 rounded-2xl bg-white/10 dark:bg-white/5 border border-white/20 dark:border-white/10 border-dashed text-center">
+              <Sparkles size={32} className="mx-auto text-white mb-3" />
+              <p className="text-lg font-bold text-white">{t('dashboard.hero.emptyState.title')}</p>
+              <p className="text-sm text-white/80 dark:text-white/60 mt-1">{t('dashboard.hero.emptyState.subtitle')}</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start" ref={uploadSectionRef}>
+        <div className="lg:col-span-2 space-y-4">
+          {/* Section Header */}
+          <div className="flex flex-col gap-1">
+            <p className="text-xs font-bold uppercase tracking-[0.3em] text-primary-500">{t('dashboard.workspace.title')}</p>
+            <h2 className="text-2xl font-black text-slate-900 dark:text-white">Choose Your Workflow</h2>
+          </div>
+
+          <div className="rounded-3xl border border-slate-200/50 dark:border-slate-700/50 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl shadow-2xl shadow-slate-200/30 dark:shadow-black/30 overflow-hidden">
+            {/* Creative Tab Navigation */}
+            <div className="p-2 bg-slate-100 dark:bg-slate-800">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { if (activeTab !== 'dxf') { setActiveTab('dxf'); setCurrentJobId(null); } }}
+                  className={`flex-1 flex items-center justify-center gap-3 px-4 py-4 rounded-2xl text-sm font-bold transition-all duration-300 ${activeTab === 'dxf'
+                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30 scale-[1.02]'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/80 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                >
+                  <div className={`p-2 rounded-xl ${activeTab === 'dxf' ? 'bg-white/20' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                    <FileText size={18} />
+                  </div>
+                  <span className="hidden sm:inline">DWG/DXF to 3D</span>
+                  <span className="sm:hidden">CAD</span>
+                </button>
+                <button
+                  onClick={() => { if (activeTab !== 'image') { setActiveTab('image'); setCurrentJobId(null); } }}
+                  className={`flex-1 flex items-center justify-center gap-3 px-4 py-4 rounded-2xl text-sm font-bold transition-all duration-300 ${activeTab === 'image'
+                    ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 scale-[1.02]'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/80 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                >
+                  <div className={`p-2 rounded-xl ${activeTab === 'image' ? 'bg-white/20' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                    <ImageIcon size={18} />
+                  </div>
+                  <span className="hidden sm:inline">Image to 3D</span>
+                  <span className="sm:hidden">Image</span>
+                </button>
+                <button
+                  onClick={() => { if (activeTab !== 'prompt') { setActiveTab('prompt'); setCurrentJobId(null); } }}
+                  className={`flex-1 flex items-center justify-center gap-3 px-4 py-4 rounded-2xl text-sm font-bold transition-all duration-300 ${activeTab === 'prompt'
+                    ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/30 scale-[1.02]'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-white/80 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                >
+                  <div className={`p-2 rounded-xl ${activeTab === 'prompt' ? 'bg-white/20' : 'bg-slate-200 dark:bg-slate-600'}`}>
+                    <Sparkles size={18} />
+                  </div>
+                  <span className="hidden sm:inline">Prompt to 3D</span>
+                  <span className="sm:hidden">AI</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Solid accent line under active tab */}
+            <div className={`h-1 transition-all duration-500 ${activeTab === 'dxf' ? 'bg-purple-600' :
+              activeTab === 'image' ? 'bg-blue-600' :
+                'bg-orange-500'
+              }`} />
+
+            {/* Content Area */}
+            <div className="p-6 min-h-[520px]">
+              {currentJobId ? (
+                <div className="w-full" ref={jobStatusRef}>
+                  <JobStatusComponent jobId={currentJobId} onReset={resetJob} />
+                </div>
+              ) : (
+                <div className="w-full animate-fade-in-up">
+                  {activeTab === 'dxf' && (
+                    <UploadForm onSubmit={handleJobSubmit} presetMode={presetMode} presetModeSignal={presetModeSignal} />
+                  )}
+                  {activeTab === 'image' && (
+                    <div className="relative">
+                      <ImageWorkflowForm onCreate={handleJobSubmit} />
+                      {isDemoMode() && <LockedFeatureOverlay
+                        title="GPU Required"
+                        message="Image to 3D conversion requires GPU acceleration. Download the desktop app for full functionality."
+                      />}
+                    </div>
+                  )}
+                  {activeTab === 'prompt' && (
+                    <PromptWorkflowForm onCreate={handleJobSubmit} />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="lg:col-span-1 space-y-4">
+          {showTips && <OnboardingTips onDismiss={dismissTips} />}
+
+
+
+          <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/85 dark:bg-slate-900/70 backdrop-blur p-5 shadow-md space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold uppercase tracking-[0.3em] text-primary-500">{t('dashboard.modes.title')}</p>
+            </div>
+            <div className="space-y-3">
+              {conversionCards.map((card) => (
+                <div key={card.id} className="rounded-xl border border-slate-200 dark:border-slate-800 bg-gradient-to-br from-white/90 via-white to-white/90 dark:from-slate-900/80 dark:via-slate-900/70 dark:to-slate-900/80 p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white ${card.id === 'cad' ? 'bg-primary-500' : card.id === 'image' ? 'bg-purple-500' : 'bg-amber-500'}`}>
+                        {card.icon}
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">{card.tag}</p>
+                        <h4 className="text-base font-bold text-slate-900 dark:text-white">{card.title}</h4>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 line-clamp-3">{card.description}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={card.comingSoon ? undefined : card.action}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white hover:-translate-y-0.5 transition-transform disabled:opacity-60"
+                      disabled={card.comingSoon}
+                    >
+                      {card.comingSoon ? t('dashboard.modes.comingSoon') : card.cta}
+                      {!card.comingSoon && <ArrowRight size={14} />}
+                    </button>
+                  </div>
+                  {card.extra && <div className="mt-3">{card.extra}</div>}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="activity" className="space-y-6">
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-bold uppercase tracking-[0.4em] text-primary-500">{t('dashboard.recent.title')}</p>
+          <h2 className="text-3xl font-black text-slate-900 dark:text-white">{t('dashboard.recent.subtitle')}</h2>
+        </div>
+        <div className="overflow-hidden rounded-3xl border border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 backdrop-blur">
+          <div className="hidden md:grid grid-cols-12 px-6 py-4 text-xs font-semibold uppercase tracking-widest text-slate-400 border-b border-slate-200 dark:border-slate-800">
+            <div className="col-span-3">{t('dashboard.recent.table.type')}</div>
+            <div className="col-span-2">{t('dashboard.recent.table.input')}</div>
+            <div className="col-span-2">{t('dashboard.recent.table.output')}</div>
+            <div className="col-span-2">{t('dashboard.recent.table.status')}</div>
+            <div className="col-span-2">{t('dashboard.recent.table.created')}</div>
+            <div className="col-span-1 text-right">{t('dashboard.recent.table.actions')}</div>
+          </div>
+
+          {recentJobs.length === 0 ? (
+            <div className="p-6 text-center text-slate-500">{t('dashboard.recent.empty')}</div>
+          ) : (
+            <div className="divide-y divide-slate-200 dark:divide-slate-800">
+              {recentJobs.map((job) => (
+                <div key={job.job_id} className="grid grid-cols-1 md:grid-cols-12 gap-4 px-6 py-4 items-center">
+                  <div className="md:col-span-3">
+                    <p className="font-semibold text-slate-900 dark:text-white">{jobIntentLabel(job)}</p>
+                    <p className="text-xs text-slate-500">{jobModeLabel(job)}</p>
+                    <p className="text-xs text-slate-400">{job.job_id}</p>
+                  </div>
+                  <div className="md:col-span-2 text-sm font-mono text-slate-600 dark:text-slate-300">{jobInputPreview(job)}</div>
+                  <div className="md:col-span-2 text-sm font-mono text-slate-600 dark:text-slate-300">{job.outputName ?? '--'}</div>
+                  <div className="md:col-span-2">
+                    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${statusStyles[job.status].bg} ${statusStyles[job.status].text}`}>
+                      <span className={`w-2 h-2 rounded-full ${statusStyles[job.status].dot} animate-pulse`} />
+                      {statusLabels[job.status]}
+                    </div>
+                  </div>
+                  <div className="md:col-span-2 text-sm text-slate-500">{formatTimestamp(job.createdAt)}</div>
+                  <div className="md:col-span-1 md:text-right">{renderActions(job)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <QuickStart
+        onCad={() => { setActiveTab('dxf'); handleLaunchWorkspace(); }}
+        onImage={() => {
+          setActiveTab('image');
+          handleLaunchWorkspace();
+          setQuickStartOpen(false);
+        }}
+        onPrompt={() => {
+          setActiveTab('prompt');
+          handleLaunchWorkspace();
+          setQuickStartOpen(false);
+        }}
+        isOpen={quickStartOpen}
+        toggle={() => setQuickStartOpen((prev) => !prev)}
+      />
+
+
+    </div>
+  );
+};
+
+export default Dashboard;
