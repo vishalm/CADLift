@@ -7,6 +7,7 @@
 
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
 import Viewer3D from './Viewer3D';
 import { X, Download, Maximize2, Minimize2, Camera } from 'lucide-react';
 
@@ -27,6 +28,8 @@ interface Viewer3DModalProps {
   downloadUrl?: string;
   /** Optional panel shown to the right of the viewer (e.g. AI chat editing) */
   sidePanel?: React.ReactNode;
+  /** Link to the full-window viewer page for this model */
+  fullPageUrl?: string;
 }
 
 export const Viewer3DModal: React.FC<Viewer3DModalProps> = ({
@@ -38,6 +41,7 @@ export const Viewer3DModal: React.FC<Viewer3DModalProps> = ({
   title,
   downloadUrl,
   sidePanel,
+  fullPageUrl,
 }) => {
   const { t } = useTranslation();
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -138,6 +142,27 @@ export const Viewer3DModal: React.FC<Viewer3DModalProps> = ({
                 <Download size={16} />
                 {t('viewer.download')}
               </button>
+            )}
+
+            {/* Full-window viewer page */}
+            {fullPageUrl && (
+              <Link
+                to={fullPageUrl}
+                onClick={onClose}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#111827',
+                  color: 'white',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  textDecoration: 'none',
+                }}
+              >
+                <Maximize2 size={16} />
+                {t('viewer.openFullPage')}
+              </Link>
             )}
 
             {/* Screenshot button */}

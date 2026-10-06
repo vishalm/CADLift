@@ -331,6 +331,7 @@ const JobStatusComponent: React.FC<JobStatusProps> = ({ jobId, onReset }) => {
         title="3D Model Viewer"
         downloadUrl={glbUrl}
         sidePanel={job?.metadata?.plan_spec ? <PlanChat jobId={job.job_id} params={job.metadata} /> : undefined}
+        fullPageUrl={job ? `/viewer/${job.job_id}` : undefined}
       />
 
       {/* Reference Image Modal */}

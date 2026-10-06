@@ -499,7 +499,15 @@ const resources = {
         screenshot: 'Screenshot',
         screenshotSoon: 'Screenshot feature coming soon!',
         supportedFormats: 'Supported Formats',
-        poweredBy: 'Powered by'
+        poweredBy: 'Powered by',
+        openFullPage: 'Open full screen',
+        back: 'Back',
+        enterFullscreen: 'Full screen (F)',
+        exitFullscreen: 'Exit full screen (F)',
+        showChat: 'Show AI chat',
+        hideChat: 'Hide AI chat',
+        loadingModel: 'Loading model...',
+        notReady: 'This model is not available. It may still be processing, or it has no 3D output.'
       },
       about: {
         badge: 'Free & Open Source Software',
@@ -1030,7 +1038,15 @@ const resources = {
         screenshot: 'Screenshot',
         screenshotSoon: 'Screenshot-Funktion kommt bald!',
         supportedFormats: 'Unterstützte Formate',
-        poweredBy: 'Powered by'
+        poweredBy: 'Bereitgestellt von',
+        openFullPage: 'Vollbild öffnen',
+        back: 'Zurück',
+        enterFullscreen: 'Vollbild (F)',
+        exitFullscreen: 'Vollbild beenden (F)',
+        showChat: 'KI-Chat anzeigen',
+        hideChat: 'KI-Chat ausblenden',
+        loadingModel: 'Modell wird geladen...',
+        notReady: 'Dieses Modell ist nicht verfügbar. Es wird eventuell noch verarbeitet oder hat keine 3D-Ausgabe.'
       },
       about: {
         badge: 'KI-gestützte 3D-Generierung',

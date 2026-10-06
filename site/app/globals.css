@@ -1,0 +1,118 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ink: #0b0d10;
+  --color-surface: #16191e;
+  --color-paper: #f2f1ee;
+  --color-cyan: #3dd6f5;
+  --color-oak: #c79a6d;
+  --color-muted: #9aa3ad;
+
+  --font-display: var(--font-space-grotesk), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
+
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html {
+  background: var(--color-ink);
+  color: var(--color-paper);
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+::selection {
+  background: var(--color-cyan);
+  color: var(--color-ink);
+}
+
+/* Blueprint grid backdrop */
+.bg-grid {
+  background-image:
+    linear-gradient(to right, rgb(242 241 238 / 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(242 241 238 / 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Film grain overlay */
+.grain::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  opacity: 0.03;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Lines that draw themselves (SVG with pathLength=1) */
+.draw-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw 1.4s var(--ease-out-expo) forwards;
+}
+.draw-loop {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: draw-loop 4s var(--ease-out-expo) infinite;
+}
+@keyframes draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes draw-loop {
+  0% { stroke-dashoffset: 1; }
+  45%, 80% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -1; }
+}
+
+/* Flowing dashes along a path */
+.flow {
+  stroke-dasharray: 0.02 0.04;
+  animation: flow 2.4s linear infinite;
+}
+@keyframes flow {
+  to { stroke-dashoffset: -0.6; }
+}
+
+@keyframes float-y {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(6px); }
+}
+.float-y { animation: float-y 2.2s ease-in-out infinite; }
+
+/* Infinite horizontal band (content is duplicated once) */
+.marquee { animation: marquee 38s linear infinite; }
+.marquee-reverse { animation-direction: reverse; }
+@keyframes marquee { to { transform: translateX(-50%); } }
+
+/* Cursor-following spotlight on cards (set --mx/--my from JS) */
+.spotlight { background-image: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%), rgb(61 214 245 / 0.13), transparent 45%); }
+
+/* Outlined display text */
+.text-outline { color: transparent; -webkit-text-stroke: 1.5px rgb(242 241 238 / 0.55); }
+
+/* Soft cyan glow behind 3D */
+.glow-cyan { background: radial-gradient(closest-side, rgb(61 214 245 / 0.22), rgb(61 214 245 / 0.06) 55%, transparent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee { animation: none; }
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .draw-line, .draw-loop { stroke-dashoffset: 0; }
+  .float-y { animation: none; }
+}

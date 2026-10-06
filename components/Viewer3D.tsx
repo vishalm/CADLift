@@ -241,8 +241,10 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({
       }
     };
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    // Container size changes too (side panels, full screen), not only the window.
+    const observer = new ResizeObserver(handleResize);
+    if (viewerContainerRef.current) observer.observe(viewerContainerRef.current);
+    return () => observer.disconnect();
   }, [viewer]);
 
   return (

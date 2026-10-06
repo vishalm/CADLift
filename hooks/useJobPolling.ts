@@ -1,21 +1,26 @@
 import { useEffect, useState } from 'react';
 import { JobRecord, jobService } from '../services/jobService';
 
-export const useJobPolling = (jobId: string | null, intervalMs = 500) => {
+/** Polls a job; `loaded` turns true after the first fetch, so "not found" can be told apart from "loading". */
+export const useJobPollingState = (jobId: string | null, intervalMs = 500) => {
   const [job, setJob] = useState<JobRecord | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!jobId) {
       setJob(null);
+      setLoaded(true);
       return;
     }
+    setLoaded(false);
 
     let cancelled = false;
 
     const fetchJob = async () => {
-      const latest = await jobService.getJob(jobId);
+      const latest = await jobService.getJob(jobId).catch(() => null);
       if (!cancelled) {
         setJob(latest);
+        setLoaded(true);
       }
     };
 
@@ -33,5 +38,7 @@ export const useJobPolling = (jobId: string | null, intervalMs = 500) => {
     };
   }, [jobId, intervalMs]);
 
-  return job;
+  return { job, loaded };
 };
+
+export const useJobPolling = (jobId: string | null, intervalMs = 500) => useJobPollingState(jobId, intervalMs).job;
