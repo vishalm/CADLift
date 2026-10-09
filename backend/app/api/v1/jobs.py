@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import logging
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -564,4 +565,58 @@ async def delete_render(
     await session.commit()
     await session.refresh(job)
     logger.info("render_deleted", job_id=job_id, render_id=render_id, files=len(file_ids))
+    return {"job": serialize_job(job)}
+
+
+MAX_PLACEMENTS = 50
+COORD_LIMIT = 10_000.0  # metres; anything beyond is a client bug, not a real placement
+
+
+class Placement(BaseModel):
+    """One 3D object render placed into a world (scene units are metres)."""
+    id: str = Field(min_length=1, max_length=40)
+    object_render_id: str = Field(min_length=1, max_length=40)
+    position: tuple[float, float, float]
+    rotation_y: float = Field(default=0.0, ge=-1000.0, le=1000.0)  # radians
+    scale: float = Field(default=1.0, gt=0.01, le=100.0)
+
+
+class PlacementsRequest(BaseModel):
+    placements: list[Placement] = Field(max_length=MAX_PLACEMENTS)
+
+
+@router.put("/{job_id}/renders/{render_id}/placements")
+async def save_world_placements(
+    job_id: str,
+    render_id: str,
+    payload: PlacementsRequest,
+    session: AsyncSession = Depends(deps.get_db),
+    user: User = Depends(deps.get_current_user),
+):
+    """Replace the 3D objects placed into a finished world."""
+    job = await _owned_job(session, job_id, user)
+    params = dict(job.params or {})
+    renders = [dict(r) for r in params.get("renders") or []]
+    world = next((r for r in renders if r.get("id") == render_id), None)
+    if world is None:
+        raise HTTPException(status_code=404, detail="Render not found")
+    if world.get("kind") != "world" or world.get("status") != "completed":
+        raise HTTPException(status_code=400, detail="Objects can only be placed into a finished 3D world")
+
+    objects = {r["id"] for r in renders if r.get("kind") == "object" and r.get("status") == "completed" and r.get("model_file_id")}
+    ids = set()
+    for p in payload.placements:
+        if p.object_render_id not in objects:
+            raise HTTPException(status_code=400, detail=f"Unknown or unfinished 3D object: {p.object_render_id}")
+        if p.id in ids:
+            raise HTTPException(status_code=400, detail=f"Duplicate placement id: {p.id}")
+        if not all(math.isfinite(v) and abs(v) <= COORD_LIMIT for v in p.position):
+            raise HTTPException(status_code=400, detail="Placement position is out of range")
+        ids.add(p.id)
+
+    world["placements"] = [p.model_dump() for p in payload.placements]
+    params["renders"] = renders
+    job.params = params
+    await session.commit()
+    await session.refresh(job)
     return {"job": serialize_job(job)}

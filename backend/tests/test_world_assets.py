@@ -391,3 +391,67 @@ def test_pipeline_derived_failure_is_recorded(source_job, monkeypatch):
     asyncio.run(render_pipeline.run_derived(job_id, rid, "world", PHOTO, "night"))
     render = _render(asyncio.run(_job_params(job_id)), rid)
     assert render["status"] == "failed" and "no credits" in render["error"]
+
+
+# ---- World placements ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def world_with_objects(owned_job):
+    async def seed():
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, owned_job)
+            done = {"status": "completed", "stage": None}
+            job.params = {**job.params, "renders": [
+                {**render_pipeline.new_render("w", "world", "daylight", ""), **done, "world_spz_file_id": "f1"},
+                {**render_pipeline.new_render("o1", "object", "daylight", "sofa"), **done, "model_file_id": "m1"},
+                {**render_pipeline.new_render("o2", "object", "daylight", "lamp"), "model_file_id": None},  # still running
+                {**render_pipeline.new_render("p", "image", "daylight", ""), **done},
+            ]}
+            await session.commit()
+
+    asyncio.run(seed())
+    return owned_job
+
+
+def _place(job_id, render_id, placements):
+    return TestClient(app).put(f"/api/v1/jobs/{job_id}/renders/{render_id}/placements", json={"placements": placements})
+
+
+def test_save_and_replace_placements(world_with_objects):
+    p = {"id": "a", "object_render_id": "o1", "position": [1.5, -1.6, -3], "rotation_y": 0.5, "scale": 1.2}
+    r = _place(world_with_objects, "w", [p, {**p, "id": "b", "position": [0, 0, 0]}])
+    assert r.status_code == 200, r.text
+    world = _render(r.json()["job"]["params"], "w")
+    assert [x["id"] for x in world["placements"]] == ["a", "b"]
+    assert world["placements"][0] == {**p, "position": [1.5, -1.6, -3.0]}
+    # Defaults, and replacing the list
+    r = _place(world_with_objects, "w", [{"id": "c", "object_render_id": "o1", "position": [0, 0, 0]}])
+    assert _render(r.json()["job"]["params"], "w")["placements"] == [
+        {"id": "c", "object_render_id": "o1", "position": [0.0, 0.0, 0.0], "rotation_y": 0.0, "scale": 1.0}]
+    assert _render(_place(world_with_objects, "w", []).json()["job"]["params"], "w")["placements"] == []
+
+
+@pytest.mark.parametrize("placement,status,detail", [
+    ({"id": "a", "object_render_id": "o2", "position": [0, 0, 0]}, 400, "unfinished"),
+    ({"id": "a", "object_render_id": "p", "position": [0, 0, 0]}, 400, "Unknown"),
+    ({"id": "a", "object_render_id": "o1", "position": [0, 20000, 0]}, 400, "out of range"),
+    ({"id": "a", "object_render_id": "o1", "position": [0, 0]}, 422, None),
+    ({"id": "a", "object_render_id": "o1", "position": [0, 0, 0], "scale": 0}, 422, None),
+    ({"id": "", "object_render_id": "o1", "position": [0, 0, 0]}, 422, None),
+])
+def test_placement_validation(world_with_objects, placement, status, detail):
+    r = _place(world_with_objects, "w", [placement])
+    assert r.status_code == status
+    if detail:
+        assert detail in r.json()["detail"]
+
+
+def test_placement_rejects_duplicates_too_many_and_bad_targets(world_with_objects, monkeypatch):
+    p = {"id": "a", "object_render_id": "o1", "position": [0, 0, 0]}
+    assert "Duplicate" in _place(world_with_objects, "w", [p, p]).json()["detail"]
+    many = [{**p, "id": str(i)} for i in range(jobs_api.MAX_PLACEMENTS + 1)]
+    assert _place(world_with_objects, "w", many).status_code == 422
+    assert _place(world_with_objects, "p", [p]).status_code == 400  # not a world
+    assert _place(world_with_objects, "nope", [p]).status_code == 404
+    assert _place("no-job", "w", [p]).status_code == 404
