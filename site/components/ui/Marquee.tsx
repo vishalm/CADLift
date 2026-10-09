@@ -2,8 +2,8 @@
 export default function Marquee({ items, reverse = false, outline = false }: { items: readonly string[]; reverse?: boolean; outline?: boolean }) {
   const row = (
     <ul className="flex shrink-0 items-center gap-10 pr-10">
-      {items.map((item) => (
-        <li key={item} className="flex items-center gap-10">
+      {items.map((item, i) => (
+        <li key={`${item}-${i}`} className="flex items-center gap-10">
           <span className={`font-display text-4xl font-semibold tracking-tight sm:text-6xl ${outline ? 'text-outline' : 'text-paper'}`}>{item}</span>
           <svg width="14" height="14" viewBox="0 0 14 14" className="text-cyan" aria-hidden="true">
             <path d="M7 0 14 7 7 14 0 7z" fill="currentColor" />
