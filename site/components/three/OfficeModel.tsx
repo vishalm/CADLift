@@ -16,6 +16,7 @@ import {
   WALL_THICKNESS,
   type LayerColors,
 } from '@/lib/plan';
+import { concreteFloor, plaster, woodGrain } from '@/lib/textures';
 
 /** Live controls a scene mutates; the model eases colours and wall height toward them. */
 export type ModelControls = {
@@ -57,17 +58,18 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
   const pot = useMemo(() => new THREE.CylinderGeometry(0.22, 0.18, 0.4, 10).translate(0, 0.2, 0), []);
   const leaves = useMemo(() => new THREE.IcosahedronGeometry(0.42, 0).translate(0, 0.85, 0), []);
 
-  const mats = useMemo(
-    () => ({
-      floor: new THREE.MeshStandardMaterial({ roughness: 0.95 }),
-      walls: new THREE.MeshStandardMaterial({ roughness: 0.85 }),
-      furniture: new THREE.MeshStandardMaterial({ roughness: 0.7 }),
+  const mats = useMemo(() => {
+    // Real-world surface detail; colours still come from the layer colours (textures are light grey).
+    const floor = concreteFloor(PLAN.width + 0.4, PLAN.depth + 0.4);
+    return {
+      floor: new THREE.MeshStandardMaterial({ roughness: 0.55, map: floor.map, bumpMap: floor.bump, bumpScale: 0.6 }),
+      walls: new THREE.MeshStandardMaterial({ roughness: 0.9, map: plaster() }),
+      furniture: new THREE.MeshStandardMaterial({ roughness: 0.62, map: woodGrain() }),
       plants: new THREE.MeshStandardMaterial({ roughness: 0.8, flatShading: true }),
       columns: new THREE.MeshStandardMaterial({ roughness: 0.9 }),
       pot: new THREE.MeshStandardMaterial({ color: '#e8e4dc', roughness: 0.6 }),
-    }),
-    [],
-  );
+    };
+  }, []);
 
   const walls = useMemo(
     () =>
@@ -154,7 +156,7 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
   return (
     <group position={[-PLAN.width / 2, 0, -PLAN.depth / 2]}>
       <group ref={(g) => { if (g) layerRefs.current[0] = g; }}>
-        <mesh geometry={unitBox} material={mats.floor} position={[PLAN.width / 2, -0.12, PLAN.depth / 2]} scale={[PLAN.width + 0.4, 0.12, PLAN.depth + 0.4]} />
+        <mesh receiveShadow geometry={unitBox} material={mats.floor} position={[PLAN.width / 2, -0.12, PLAN.depth / 2]} scale={[PLAN.width + 0.4, 0.12, PLAN.depth + 0.4]} />
         {blueprint &&
           walls.map((w, i) => (
             <Line
@@ -174,6 +176,8 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
         {walls.map((w, i) => (
           <mesh
             key={i}
+            castShadow
+            receiveShadow
             ref={(m) => { if (m) wallRefs.current[i] = m; }}
             geometry={unitBox}
             material={mats.walls}
@@ -185,6 +189,7 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
         {COLUMNS.map((col, i) => (
           <mesh
             key={i}
+            castShadow
             ref={(m) => { if (m) columnRefs.current[i] = m; }}
             geometry={unitBox}
             material={mats.columns}
@@ -198,8 +203,8 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
       <group ref={(g) => { if (g) layerRefs.current[2] = g; }}>
         {plants.map((pl, i) => (
           <group key={i} ref={(g) => { if (g) plantRefs.current[i] = g; }} position={[pl.x, 0, pl.z]} scale={0.001}>
-            <mesh geometry={pot} material={mats.pot} />
-            <mesh geometry={leaves} material={mats.plants} />
+            <mesh castShadow geometry={pot} material={mats.pot} />
+            <mesh castShadow geometry={leaves} material={mats.plants} />
           </group>
         ))}
         {label(labels?.[1], 0.8, 1)}
@@ -209,6 +214,8 @@ export default function OfficeModel({ controls, lite = false, blueprint = true, 
         {furniture.map((f, i) => (
           <mesh
             key={i}
+            castShadow
+            receiveShadow
             ref={(m) => { if (m) furnRefs.current[i] = m; }}
             geometry={unitBox}
             material={mats.furniture}
