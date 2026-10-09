@@ -556,3 +556,24 @@ def test_fit_frame_is_exact_video_size(w, h):
 def test_fit_frame_rejects_garbage():
     with pytest.raises(azure_media.AzureMediaError, match="decode"):
         azure_media.fit_frame(b"nope")
+
+
+def test_job_download_urls_resolve(owned_job):
+    """serialize_job used to emit /files/{id}/download, a route that does not exist."""
+    async def attach():
+        from app.services.storage import save_job_file
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, owned_job)
+            glb = save_job_file(session, job, b"glTF", "output", "m.glb", "model/gltf-binary")
+            await session.flush()
+            job.params = {**job.params, "glb_file_id": glb.id}
+            job.output_file_id = glb.id
+            await session.commit()
+
+    asyncio.run(attach())
+    client = TestClient(app)
+    body = client.get(f"/api/v1/jobs/{owned_job}").json()
+    for field in ("download_url", "glb_download_url"):
+        assert not body[field].endswith("/download")
+        assert client.get(body[field]).content == b"glTF"
+    assert body["dxf_download_url"] is None and body["step_download_url"] is None

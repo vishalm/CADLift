@@ -34,17 +34,17 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 def serialize_job(job: Job) -> JobRead:
     
-    # Compute download URLs
-    download_url = f"/api/v1/files/{job.output_file_id}/download" if job.output_file_id else None
-    
-    # Extract specific artifacts from params
-    dxf_id = (job.params or {}).get("dxf_file_id")
-    step_id = (job.params or {}).get("step_file_id")
-    glb_id = (job.params or {}).get("glb_file_id")
-    
-    dxf_url = f"/api/v1/files/{dxf_id}/download" if dxf_id else None
-    step_url = f"/api/v1/files/{step_id}/download" if step_id else None
-    glb_url = f"/api/v1/files/{glb_id}/download" if glb_id else None
+    def file_url(file_id: str | None) -> str | None:
+        # Matches GET /api/v1/files/{file_id} (there is no /download suffix route).
+        return f"{settings.api_v1_prefix}/files/{file_id}" if file_id else None
+
+    params = job.params or {}
+    download_url = file_url(job.output_file_id)
+    dxf_id = params.get("dxf_file_id")
+    step_id = params.get("step_file_id")
+    dxf_url = file_url(dxf_id)
+    step_url = file_url(step_id)
+    glb_url = file_url(params.get("glb_file_id"))
     
     # Determine output name
     # Usually we don't store the exact output filename on the job model easily accessible
