@@ -1,7 +1,7 @@
 // Run with: npm run test:unit
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { EYE_HEIGHT, STEP_HEIGHT, walkStep } from './walk.ts';
+import { EYE_HEIGHT, snapToFloor, STEP_HEIGHT, walkStep } from './walk.ts';
 import type { CastFn, Vec3 } from './walk.ts';
 
 /** A world made of a floor height function and vertical walls at given x positions. */
@@ -74,4 +74,12 @@ test('refuses to walk off the edge of the world', () => {
 test('with no floor anywhere, stays put', () => {
   const out = walkStep({ x: 0, y: 2, z: 0 }, { x: 1, y: 2, z: 0 }, world(() => null));
   assert.deepEqual(out, { x: 0, y: 2, z: 0 });
+});
+
+test('snapToFloor lands on the first floor below the eyes', () => {
+  const out = snapToFloor({ x: 2, y: 0, z: 1 }, world(() => -1.4));
+  assert.ok(out);
+  assert.deepEqual([out.x, out.z], [2, 1]);
+  close(out.y, -1.4 + EYE_HEIGHT);
+  assert.equal(snapToFloor({ x: 0, y: 0, z: 0 }, world(() => null)), null);
 });

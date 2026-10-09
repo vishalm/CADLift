@@ -401,6 +401,7 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
       {world?.world_spz_file_id && (
         <WorldViewer
           spzUrl={fileUrl(world.world_spz_file_id)}
+          colliderUrl={world.world_collider_file_id ? fileUrl(world.world_collider_file_id) : undefined}
           meta={world.world_meta}
           audioUrl={worldSound ? fileUrl(worldSound) : undefined}
           onClose={() => setWorld(null)}

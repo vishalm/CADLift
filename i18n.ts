@@ -578,7 +578,10 @@ const resources = {
         error: 'Could not load the world: {{error}}',
         controls: 'W A S D: move, Q / E: down / up, drag: look around, Shift: faster',
         soundOn: 'Sound on',
-        soundOff: 'Mute'
+        soundOff: 'Mute',
+        walk: 'Walk',
+        fly: 'Fly',
+        controlsWalk: 'W A S D: walk, drag: look around, Shift: faster. Walls and floors are solid.'
       },
       about: {
         badge: 'Free & Open Source Software',
@@ -1188,7 +1191,10 @@ const resources = {
         error: 'Welt konnte nicht geladen werden: {{error}}',
         controls: 'W A S D: bewegen, Q / E: runter / hoch, Ziehen: umsehen, Shift: schneller',
         soundOn: 'Ton an',
-        soundOff: 'Stumm'
+        soundOff: 'Stumm',
+        walk: 'Gehen',
+        fly: 'Fliegen',
+        controlsWalk: 'W A S D: gehen, Ziehen: umsehen, Shift: schneller. Wände und Böden sind fest.'
       },
       about: {
         badge: 'KI-gestützte 3D-Generierung',

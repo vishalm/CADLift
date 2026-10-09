@@ -53,3 +53,9 @@ export function walkStep(prev: Vec3, next: Vec3, cast: CastFn): Vec3 {
   }
   return { x, y: probe.y - down + EYE_HEIGHT, z };
 }
+
+/** Drop from `pos` (eyes) onto the first floor below it, at eye height; null when nothing is below. */
+export function snapToFloor(pos: Vec3, cast: CastFn): Vec3 | null {
+  const down = cast(pos, DOWN, MAX_DROP);
+  return down === null ? null : { x: pos.x, y: pos.y - down + EYE_HEIGHT, z: pos.z };
+}
