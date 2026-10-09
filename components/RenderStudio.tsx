@@ -60,6 +60,10 @@ const KIND_ICONS: Record<RenderKind | DerivedKind, React.ReactNode> = {
 
 const KindIcon = ({ kind }: { kind: RenderKind | DerivedKind }) => <svg {...svg}>{KIND_ICONS[kind]}</svg>;
 
+const TrashIcon = () => (
+  <svg {...svg} width={14} height={14}><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
+);
+
 const DownloadIcon = () => (
   <svg {...svg} width={14} height={14}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
 );
@@ -77,6 +81,7 @@ interface RenderCardProps {
   onDerive: (render: RenderEntry, kind: DerivedKind, prompt: string) => Promise<void>;
   onExplore: (render: RenderEntry) => void;
   onViewModel: (render: RenderEntry) => void;
+  onDelete: (render: RenderEntry) => void;
 }
 
 const DeriveActions: React.FC<Pick<RenderCardProps, 'render' | 'canStart' | 'onDerive'>> = ({ render, canStart, onDerive }) => {
@@ -140,7 +145,7 @@ const DeriveActions: React.FC<Pick<RenderCardProps, 'render' | 'canStart' | 'onD
   );
 };
 
-const RenderCard: React.FC<RenderCardProps> = ({ render, fallbackPreview, canStart, onDerive, onExplore, onViewModel }) => {
+const RenderCard: React.FC<RenderCardProps> = ({ render, fallbackPreview, canStart, onDerive, onExplore, onViewModel, onDelete }) => {
   const { t } = useTranslation();
   const preview = render.image_file_id ?? render.world_pano_file_id ?? render.snapshot_file_id ?? fallbackPreview;
   const done = render.status === 'completed';
@@ -186,6 +191,17 @@ const RenderCard: React.FC<RenderCardProps> = ({ render, fallbackPreview, canSta
           <KindIcon kind={render.kind} />
           <span>{t(`render.kind_${render.kind}`)}</span>
           <span className="text-slate-400 font-normal">· {t(`render.style_${render.style}`)}</span>
+          {render.status !== 'processing' && (
+            <button
+              type="button"
+              onClick={() => onDelete(render)}
+              aria-label={t('render.delete')}
+              title={t('render.delete')}
+              className="ml-auto p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950"
+            >
+              <TrashIcon />
+            </button>
+          )}
         </div>
         {render.prompt && <p className="text-slate-500 dark:text-slate-400 truncate" title={render.prompt}>{render.prompt}</p>}
         {render.status === 'failed' && (
@@ -268,6 +284,17 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
     try {
       await jobService.deriveRender(jobId, source.id, derivedKind, derivedPrompt);
       setNotice(t(`render.started_${derivedKind}`));
+    } catch (err) {
+      setError(apiErrorDetail(err));
+    }
+  };
+
+  const remove = async (render: RenderEntry) => {
+    if (!window.confirm(t('render.confirmDelete', { kind: t(`render.kind_${render.kind}`) }))) return;
+    setError(null);
+    setNotice(null);
+    try {
+      await jobService.deleteRender(jobId, render.id);
     } catch (err) {
       setError(apiErrorDetail(err));
     }
@@ -364,6 +391,7 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
                 onDerive={derive}
                 onExplore={setWorld}
                 onViewModel={setModel}
+                onDelete={(r) => void remove(r)}
               />
             ))}
           </ul>

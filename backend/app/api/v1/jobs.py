@@ -529,3 +529,39 @@ async def derive_from_render(
     render = render_pipeline.new_render(uuid4().hex[:12], kind, source.get("style", "daylight"), prompt.strip(), render_id)
     return await _launch_render(session, job, params, renders, render, lambda: render_pipeline.run_derived(
         job.id, render["id"], kind, photo, render["style"], render["prompt"]))
+
+
+@router.delete("/{job_id}/renders/{render_id}")
+async def delete_render(
+    job_id: str,
+    render_id: str,
+    session: AsyncSession = Depends(deps.get_db),
+    user: User = Depends(deps.get_current_user),
+):
+    """Remove a render and its files. Running renders cannot be deleted (their provider call is already paid)."""
+    job = await _owned_job(session, job_id, user)
+    params = dict(job.params or {})
+    renders = list(params.get("renders") or [])
+    render = next((r for r in renders if r.get("id") == render_id), None)
+    if render is None:
+        raise HTTPException(status_code=404, detail="Render not found")
+    if render.get("status") == "processing":
+        raise HTTPException(status_code=409, detail="This render is still running. Delete it when it finishes.")
+
+    file_ids = [value for key, value in render.items() if key.endswith("_file_id") and value]
+    for file_id in file_ids:
+        record = await session.get(FileModel, file_id)
+        if record is None or record.job_id != job.id:
+            continue
+        try:
+            storage_service.delete(record.storage_key)
+        except (OSError, ValueError) as exc:
+            logger.warning("render_file_delete_failed", file_id=file_id, error=str(exc))
+        await session.delete(record)
+
+    params["renders"] = [r for r in renders if r.get("id") != render_id]
+    job.params = params
+    await session.commit()
+    await session.refresh(job)
+    logger.info("render_deleted", job_id=job_id, render_id=render_id, files=len(file_ids))
+    return {"job": serialize_job(job)}

@@ -567,7 +567,9 @@ const resources = {
         downloadCollider: 'Collider',
         downloadPano: 'Panorama',
         downloadModel: '3D model',
-        downloadSound: 'Sound'
+        downloadSound: 'Sound',
+        delete: 'Delete',
+        confirmDelete: 'Delete this {{kind}} and its files? This cannot be undone.'
       },
       world: {
         title: '3D world',
@@ -1175,7 +1177,9 @@ const resources = {
         downloadCollider: 'Kollision',
         downloadPano: 'Panorama',
         downloadModel: '3D-Modell',
-        downloadSound: 'Klang'
+        downloadSound: 'Klang',
+        delete: 'Löschen',
+        confirmDelete: '{{kind}} und zugehörige Dateien löschen? Das kann nicht rückgängig gemacht werden.'
       },
       world: {
         title: '3D-Welt',

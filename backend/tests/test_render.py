@@ -577,3 +577,68 @@ def test_job_download_urls_resolve(owned_job):
         assert not body[field].endswith("/download")
         assert client.get(body[field]).content == b"glTF"
     assert body["dxf_download_url"] is None and body["step_download_url"] is None
+
+
+# ---- Delete ----------------------------------------------------------------------------
+
+
+def test_delete_render_removes_entry_and_files(owned_job, fake_fal):
+    from app.services.storage import storage_service
+
+    rid = _new_render_in_db(owned_job, "video")
+    asyncio.run(render_pipeline.run_render(owned_job, rid, SNAPSHOT, "video", "daylight"))
+    render = _render(asyncio.run(_job_params(owned_job)), rid)
+    file_ids = [render["image_file_id"], render["video_file_id"]]
+
+    async def paths():
+        async with AsyncSessionLocal() as session:
+            return [storage_service.resolve_path((await session.get(FileModel, f)).storage_key) for f in file_ids]
+
+    on_disk = asyncio.run(paths())
+    assert all(p.exists() for p in on_disk)
+
+    r = TestClient(app).delete(f"/api/v1/jobs/{owned_job}/renders/{rid}")
+    assert r.status_code == 200, r.text
+    assert r.json()["job"]["params"]["renders"] == []
+    assert not any(p.exists() for p in on_disk)
+
+    async def rows():
+        async with AsyncSessionLocal() as session:
+            return [await session.get(FileModel, f) for f in file_ids]
+
+    assert asyncio.run(rows()) == [None, None]
+
+
+def test_delete_render_errors(owned_job):
+    client = TestClient(app)
+    assert client.delete(f"/api/v1/jobs/{owned_job}/renders/nope").status_code == 404
+    assert client.delete("/api/v1/jobs/no-job/renders/nope").status_code == 404
+    rid = _new_render_in_db(owned_job, "image")  # still processing
+    r = client.delete(f"/api/v1/jobs/{owned_job}/renders/{rid}")
+    assert r.status_code == 409 and "still running" in r.json()["detail"]
+
+
+def test_delete_render_ignores_files_of_other_jobs(owned_job):
+    """A tampered render entry must not let one job delete another job's files."""
+    async def seed():
+        from app.services.storage import save_job_file
+        async with AsyncSessionLocal() as session:
+            other = Job(job_type="cad", mode="floor_plan", status="completed", params={}, user_id=None)
+            session.add(other)
+            await session.flush()
+            foreign = save_job_file(session, other, b"theirs", "output", "x.bin", "application/octet-stream")
+            await session.flush()
+            job = await session.get(Job, owned_job)
+            job.params = {**job.params, "renders": [{"id": "r", "status": "completed", "image_file_id": foreign.id}]}
+            await session.commit()
+            return foreign.id
+
+    foreign_id = asyncio.run(seed())
+    assert TestClient(app).delete(f"/api/v1/jobs/{owned_job}/renders/r").status_code == 200
+    assert asyncio.run(_file_bytes_any(foreign_id)) == b"theirs"
+
+
+async def _file_bytes_any(file_id):
+    from app.services.storage import storage_service
+    async with AsyncSessionLocal() as session:
+        return storage_service.resolve_path((await session.get(FileModel, file_id)).storage_key).read_bytes()

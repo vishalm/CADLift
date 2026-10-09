@@ -449,6 +449,15 @@ export const jobService = {
     return job;
   },
 
+  /** Delete a finished or failed render and its files. */
+  async deleteRender(jobId: string, renderId: string): Promise<JobRecord> {
+    const response = await apiFetch(`/api/v1/jobs/${jobId}/renders/${renderId}`, { method: 'DELETE' });
+    const payload = (await response.json()) as { job: ApiJobEntity };
+    const job = adaptApiJob(payload.job);
+    notify(job.job_id);
+    return job;
+  },
+
   /** Revert a PDF plan model to its previous version. */
   async undoPlan(jobId: string): Promise<JobRecord> {
     const response = await apiFetch(`/api/v1/jobs/${jobId}/chat/undo`, { method: 'POST' });
