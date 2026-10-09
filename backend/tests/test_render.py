@@ -49,9 +49,10 @@ def _render(params: dict, render_id: str) -> dict:
     return next(r for r in params["renders"] if r["id"] == render_id)
 
 
-def _providers(monkeypatch, fal_key=None, azure_image=None, azure_video=None, choice="auto"):
+def _providers(monkeypatch, fal_key=None, azure_image=None, azure_video=None, choice="auto", world_key=None):
     """Pin render provider settings so the developer's real backend/.env never leaks into tests."""
     settings = get_settings()
+    monkeypatch.setattr(settings, "world_labs_api_key", world_key)
     monkeypatch.setattr(settings, "render_provider", choice)
     monkeypatch.setattr(settings, "fal_key", fal_key)
     monkeypatch.setattr(settings, "azure_openai_endpoint", "https://res.openai.azure.com/")

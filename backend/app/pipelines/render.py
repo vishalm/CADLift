@@ -4,11 +4,16 @@ or a construction timelapse video (empty site to finished building). Photos and 
 on Azure OpenAI (gpt-image-1, Sora 2) when configured, else FAL (image-blaster's models); see
 image_backend / video_backend. Renders live in job.params["renders"]; each runs as a background task.
 
-Kinds:
+Kinds started from a viewer snapshot:
   image         snapshot -> photoreal still
   video         snapshot -> photoreal still -> slow orbit video
   construction  snapshot -> photoreal still -> same view as an early construction site,
                 then a video whose first frame is the site and (on FAL) last frame is the finished building
+
+Kinds derived from a finished render's photo (image-blaster's asset generators):
+  world   World Labs Marble -> explorable Gaussian splat world (.spz) + collider mesh + panorama
+  object  photo -> isolated object reference image -> Hunyuan 3D textured model (.glb), via FAL
+  sound   ElevenLabs ambient loop (.mp3), via FAL
 """
 from __future__ import annotations
 
@@ -18,7 +23,7 @@ from datetime import datetime, timezone
 from app.db.session import AsyncSessionLocal
 from app.models import Job
 from app.core.config import get_settings
-from app.services import azure_media, fal
+from app.services import azure_media, fal, worldlabs
 from app.services.storage import save_job_file
 
 logger = logging.getLogger("cadlift.pipelines.render")
@@ -31,6 +36,7 @@ STYLES = {
     "overcast": "soft overcast light, muted tones, no harsh shadows",
 }
 KINDS = ("image", "video", "construction")
+DERIVED_KINDS = ("world", "object", "sound")
 
 PHOTO_PROMPT = (
     "Turn this untextured 3D CAD render into a photorealistic architectural photograph. "
@@ -51,6 +57,23 @@ MOTION_PROMPTS = {
         "structure, floors, walls, windows and finishes appear stage by stage, cranes and workers move, clouds race."
     ),
 }
+
+
+# image-blaster's object extraction prompt, so Hunyuan sees one clean object on white.
+OBJECT_PROMPT = (
+    "Isolate the {name} from this image. Reproduce it exactly as shown, with the same colors, materials and "
+    "proportions. White background, centered, tight crop, studio lighting. No other objects, no scene, no people, "
+    "no text, no shadows on the ground. One single object only, true to the source image."
+)
+AMBIENCE_PROMPT = "Ambient environment, seamless loop of {description}. No music, no voices."
+STYLE_AMBIENCE = {
+    "daylight": "a quiet residential neighbourhood in the daytime: birdsong, light breeze, distant traffic",
+    "golden_hour": "a calm early evening outdoors: birds settling, soft wind, faint distant traffic",
+    "night": "dusk in a quiet neighbourhood: crickets, a distant city hum, occasional far-off car",
+    "interior": "a quiet interior: soft room tone, gentle ventilation hum, muffled sounds from outside",
+    "overcast": "a cool overcast day outdoors: steady soft wind, rustling leaves, distant traffic",
+}
+FIRST_STAGE = {"world": "world", "object": "isolate", "sound": "sound"}
 
 
 def _backend(capability: str):
@@ -76,21 +99,39 @@ def _require(backend, what: str):
     return backend
 
 
+def missing_provider(kind: str) -> str | None:
+    """Why `kind` cannot run with the current configuration, or None when it can."""
+    if kind in KINDS and image_backend() is None:
+        return "Render studio needs AZURE_IMAGE_DEPLOYMENT_NAME (Azure OpenAI gpt-image-1) or FAL_KEY in backend/.env"
+    if kind in ("video", "construction") and video_backend() is None:
+        return "Videos need AZURE_VIDEO_DEPLOYMENT_NAME (Azure OpenAI Sora 2) or FAL_KEY in backend/.env"
+    if kind == "world" and not worldlabs.is_enabled():
+        return "3D worlds need WORLD_LABS_API_KEY in backend/.env"
+    if kind == "object" and (image_backend() is None or not fal.is_enabled()):
+        return "3D objects need FAL_KEY (Hunyuan 3D) in backend/.env"
+    if kind == "sound" and not fal.is_enabled():
+        return "Ambient sound needs FAL_KEY (ElevenLabs) in backend/.env"
+    return None
+
+
 def photo_prompt(style: str, extra: str = "") -> str:
     prompt = PHOTO_PROMPT.format(style=STYLES[style])
     return f"{prompt} {extra.strip()}" if extra.strip() else prompt
 
 
-def new_render(render_id: str, kind: str, style: str, prompt: str) -> dict:
-    return {
+def new_render(render_id: str, kind: str, style: str, prompt: str, source_render_id: str | None = None) -> dict:
+    render = {
         "id": render_id,
         "kind": kind,
         "style": style,
         "prompt": prompt,
         "status": "processing",
-        "stage": "photo",
+        "stage": FIRST_STAGE.get(kind, "photo"),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if source_render_id:
+        render["source_render_id"] = source_render_id
+    return render
 
 
 async def _patch(job_id: str, render_id: str, fields: dict, files: dict | None = None) -> None:
@@ -114,10 +155,23 @@ async def _patch(job_id: str, render_id: str, fields: dict, files: dict | None =
         await session.commit()
 
 
-async def run_render(job_id: str, render_id: str, snapshot: bytes, kind: str, style: str, prompt: str = "") -> None:
-    """Background task; never raises. Failures land on the render as status=failed."""
+async def _run_safely(job_id: str, render_id: str, work) -> None:
+    """Run a background render; never raises. Failures land on the render as status=failed."""
     # ponytail: lives in the API process, so a restart orphans in-flight renders (see sweep in jobs API).
     try:
+        await work()
+    except Exception as exc:  # noqa: BLE001 - background task: record, do not crash the loop
+        logger.exception("render_failed", extra={"job_id": job_id, "render_id": render_id})
+        try:
+            await _patch(job_id, render_id, {"status": "failed", "stage": None, "error": str(exc)[:300]})
+        except Exception:  # noqa: BLE001
+            logger.exception("render_failure_not_recorded", extra={"job_id": job_id, "render_id": render_id})
+
+
+async def run_render(job_id: str, render_id: str, snapshot: bytes, kind: str, style: str, prompt: str = "") -> None:
+    """Photo, orbit video or construction timelapse from a viewer snapshot."""
+
+    async def work() -> None:
         images = _require(image_backend(), "image")
         videos = _require(video_backend(), "video") if kind != "image" else None
         providers = {"image": images.NAME, **({"video": videos.NAME} if videos else {})}
@@ -141,9 +195,37 @@ async def run_render(job_id: str, render_id: str, snapshot: bytes, kind: str, st
         video = await videos.image_to_video(motion, start, end)
         await _patch(job_id, render_id, {"status": "completed", "stage": None, "providers": providers},
                      {"video_file_id": (video, f"render_{render_id}.mp4", "video/mp4")})
-    except Exception as exc:  # noqa: BLE001 - background task: record, do not crash the loop
-        logger.exception("render_failed", extra={"job_id": job_id, "render_id": render_id})
-        try:
-            await _patch(job_id, render_id, {"status": "failed", "stage": None, "error": str(exc)[:300]})
-        except Exception:  # noqa: BLE001
-            logger.exception("render_failure_not_recorded", extra={"job_id": job_id, "render_id": render_id})
+
+    await _run_safely(job_id, render_id, work)
+
+
+async def run_derived(job_id: str, render_id: str, kind: str, photo: bytes, style: str, prompt: str = "") -> None:
+    """World, 3D object or ambient sound from a finished render's photo."""
+
+    async def work() -> None:
+        done = {"status": "completed", "stage": None}
+        if kind == "world":
+            world = await worldlabs.generate_world(photo, prompt, name=f"cadlift-{render_id}")
+            files = {"world_spz_file_id": (world["spz"], f"world_{render_id}.spz", "application/octet-stream")}
+            if world["collider"]:
+                files["world_collider_file_id"] = (world["collider"], f"world_{render_id}_collider.glb", "model/gltf-binary")
+            if world["pano"]:
+                files["world_pano_file_id"] = (world["pano"], f"world_{render_id}_pano.png", "image/png")
+            await _patch(job_id, render_id, {**done, "world_meta": world["meta"], "providers": {"world": "worldlabs"}}, files)
+        elif kind == "object":
+            images = _require(image_backend(), "image")
+            reference = await images.edit_image(OBJECT_PROMPT.format(name=prompt.strip()), [photo])
+            await _patch(job_id, render_id, {"stage": "model"},
+                         {"image_file_id": (reference, f"object_{render_id}_reference.png", "image/png")})
+            model = await fal.image_to_3d(reference)
+            await _patch(job_id, render_id, {**done, "providers": {"image": images.NAME, "model": fal.NAME}},
+                         {"model_file_id": (model, f"object_{render_id}.glb", "model/gltf-binary")})
+        elif kind == "sound":
+            description = prompt.strip() or STYLE_AMBIENCE[style]
+            audio = await fal.sound_effect(AMBIENCE_PROMPT.format(description=description))
+            await _patch(job_id, render_id, {**done, "providers": {"sound": fal.NAME}},
+                         {"audio_file_id": (audio, f"sound_{render_id}.mp3", "audio/mpeg")})
+        else:
+            raise ValueError(f"Unknown derived kind: {kind}")
+
+    await _run_safely(job_id, render_id, work)

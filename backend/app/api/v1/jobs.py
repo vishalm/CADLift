@@ -433,6 +433,37 @@ def _sweep_stale_renders(renders: list[dict]) -> list[dict]:
     return swept
 
 
+def _render_slot(job: Job) -> tuple[dict, list[dict]]:
+    """Params plus swept render history; 429 when the job already has its maximum running."""
+    params = dict(job.params or {})
+    renders = _sweep_stale_renders(list(params.get("renders") or []))
+    if sum(r.get("status") == "processing" for r in renders) >= MAX_ACTIVE_RENDERS:
+        raise HTTPException(status_code=429, detail="Two renders are already running. Wait for one to finish.")
+    return params, renders
+
+
+async def _launch_render(session: AsyncSession, job: Job, params: dict, renders: list[dict], render: dict, work) -> dict:
+    """Append the render, commit, and start `work()` (a coroutine factory) in the background."""
+    # ponytail: renders share job.params with plan chat; a chat edit landing mid-render can drop a render
+    # update (last write wins). Move renders to their own table if that ever bites.
+    # Trimmed renders keep their files on disk until the job is deleted (same as plan versions).
+    params["renders"] = (renders + [render])[-MAX_RENDERS:]
+    job.params = params
+    await session.commit()
+    await session.refresh(job)
+    task = asyncio.create_task(work())
+    _render_tasks.add(task)
+    task.add_done_callback(_render_tasks.discard)
+    logger.info("render_started", job_id=job.id, render_id=render["id"], kind=render["kind"])
+    return {"render": render, "job": serialize_job(job)}
+
+
+def _require_provider(kind: str) -> None:
+    missing = render_pipeline.missing_provider(kind)
+    if missing:
+        raise HTTPException(status_code=503, detail=missing)
+
+
 @router.post("/{job_id}/renders", status_code=status.HTTP_202_ACCEPTED)
 async def create_render(
     job_id: str,
@@ -447,12 +478,7 @@ async def create_render(
     job = await _owned_job(session, job_id, user)
     if kind not in render_pipeline.KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(render_pipeline.KINDS)}")
-    if render_pipeline.image_backend() is None:
-        raise HTTPException(status_code=503, detail=(
-            "Render studio needs AZURE_IMAGE_DEPLOYMENT_NAME (Azure OpenAI gpt-image-1) or FAL_KEY in backend/.env"))
-    if kind != "image" and render_pipeline.video_backend() is None:
-        raise HTTPException(status_code=503, detail=(
-            "Videos need AZURE_VIDEO_DEPLOYMENT_NAME (Azure OpenAI Sora 2) or FAL_KEY in backend/.env"))
+    _require_provider(kind)
     if style not in render_pipeline.STYLES:
         raise HTTPException(status_code=400, detail=f"style must be one of {', '.join(render_pipeline.STYLES)}")
 
@@ -463,25 +489,43 @@ async def create_render(
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"Invalid snapshot: {error_msg}")
 
-    params = dict(job.params or {})
-    renders = _sweep_stale_renders(list(params.get("renders") or []))
-    if sum(r.get("status") == "processing" for r in renders) >= MAX_ACTIVE_RENDERS:
-        raise HTTPException(status_code=429, detail="Two renders are already running. Wait for one to finish.")
-
+    params, renders = _render_slot(job)
     render = render_pipeline.new_render(uuid4().hex[:12], kind, style, prompt.strip())
     snapshot_file = save_job_file(session, job, data, "render", f"render_{render['id']}_snapshot.png", "image/png")
     await session.flush()
     render["snapshot_file_id"] = snapshot_file.id
-    # ponytail: renders share job.params with plan chat; a chat edit landing mid-render can drop a render
-    # update (last write wins). Move renders to their own table if that ever bites.
-    # Trimmed renders keep their files on disk until the job is deleted (same as plan versions).
-    params["renders"] = (renders + [render])[-MAX_RENDERS:]
-    job.params = params
-    await session.commit()
-    await session.refresh(job)
+    return await _launch_render(session, job, params, renders, render, lambda: render_pipeline.run_render(
+        job.id, render["id"], data, kind, style, render["prompt"]))
 
-    task = asyncio.create_task(render_pipeline.run_render(job.id, render["id"], data, kind, style, render["prompt"]))
-    _render_tasks.add(task)
-    task.add_done_callback(_render_tasks.discard)
-    logger.info("render_started", job_id=job_id, render_id=render["id"], kind=kind, style=style)
-    return {"render": render, "job": serialize_job(job)}
+
+@router.post("/{job_id}/renders/{render_id}/derive", status_code=status.HTTP_202_ACCEPTED)
+async def derive_from_render(
+    job_id: str,
+    render_id: str,
+    kind: str = Form(...),
+    prompt: str = Form("", max_length=500),
+    session: AsyncSession = Depends(deps.get_db),
+    user: User = Depends(deps.get_current_user),
+):
+    """From a finished render's photo: an explorable 3D world, a 3D object model, or an ambient sound loop."""
+    job = await _owned_job(session, job_id, user)
+    if kind not in render_pipeline.DERIVED_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(render_pipeline.DERIVED_KINDS)}")
+    if kind == "object" and not prompt.strip():
+        raise HTTPException(status_code=400, detail="Name the object to turn into 3D, e.g. sofa")
+    _require_provider(kind)
+
+    source = next((r for r in (job.params or {}).get("renders") or [] if r.get("id") == render_id), None)
+    if source is None:
+        raise HTTPException(status_code=404, detail="Render not found")
+    if source.get("kind") not in render_pipeline.KINDS or source.get("status") != "completed" or not source.get("image_file_id"):
+        raise HTTPException(status_code=400, detail="Start from a finished photo, video or construction render")
+    photo_file = await session.get(FileModel, source["image_file_id"])
+    if photo_file is None or photo_file.job_id != job.id:
+        raise HTTPException(status_code=404, detail="The render's photo is missing")
+    photo = storage_service.resolve_path(photo_file.storage_key).read_bytes()
+
+    params, renders = _render_slot(job)
+    render = render_pipeline.new_render(uuid4().hex[:12], kind, source.get("style", "daylight"), prompt.strip(), render_id)
+    return await _launch_render(session, job, params, renders, render, lambda: render_pipeline.run_derived(
+        job.id, render["id"], kind, photo, render["style"], render["prompt"]))

@@ -181,3 +181,213 @@ def test_sound_effect_without_audio_raises(fake_run):
     fake_run({})
     with pytest.raises(fal.FalError, match="no audio"):
         asyncio.run(fal.sound_effect("x"))
+
+
+# ---- Derive endpoint and pipeline ---------------------------------------------------------
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.api.v1 import jobs as jobs_api  # noqa: E402
+from app.db.session import AsyncSessionLocal  # noqa: E402
+from app.main import app  # noqa: E402
+from app.models import Job  # noqa: E402
+from app.pipelines import render as render_pipeline  # noqa: E402
+from tests.test_render import (  # noqa: E402,F401  (owned_job is a fixture)
+    SNAPSHOT, _file_bytes, _job_params, _post, _providers, _render, owned_job,
+)
+
+
+def _finished_photo_render(job_id: str, monkeypatch) -> str:
+    """Run a real (faked-provider) photo render so the job has a completed render with a stored photo."""
+    async def edit_image(prompt, images):
+        return PHOTO
+
+    monkeypatch.setattr(render_pipeline.fal, "edit_image", edit_image)
+
+    async def seed():
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            job.params = {**job.params, "renders": [render_pipeline.new_render("src", "image", "night", "")]}
+            await session.commit()
+
+    asyncio.run(seed())
+    asyncio.run(render_pipeline.run_render(job_id, "src", SNAPSHOT, "image", "night"))
+    assert _render(asyncio.run(_job_params(job_id)), "src")["status"] == "completed"
+    return "src"
+
+
+@pytest.fixture
+def source_job(owned_job, monkeypatch):
+    """A job with one finished photo render ("src"), FAL and World Labs enabled."""
+    _providers(monkeypatch, fal_key="k", world_key="wl")
+    return owned_job, _finished_photo_render(owned_job, monkeypatch)
+
+
+@pytest.fixture
+def derive_job(source_job, monkeypatch):
+    """source_job, with background derived renders captured instead of run."""
+    job_id, source = source_job
+    started = []
+
+    async def fake_run_derived(*args):
+        started.append(args)
+
+    monkeypatch.setattr(jobs_api.render_pipeline, "run_derived", fake_run_derived)
+    return job_id, source, started
+
+
+def _derive(job_id, render_id, kind, prompt=""):
+    return TestClient(app).post(f"/api/v1/jobs/{job_id}/renders/{render_id}/derive", data={"kind": kind, "prompt": prompt})
+
+
+@pytest.mark.parametrize("kind,prompt", [("world", "keep it sunny"), ("object", "sofa"), ("sound", "")])
+def test_derive_queues_from_source_photo(derive_job, kind, prompt):
+    job_id, source, started = derive_job
+    r = _derive(job_id, source, kind, prompt)
+    assert r.status_code == 202, r.text
+    render = r.json()["render"]
+    assert render["kind"] == kind and render["source_render_id"] == source
+    assert render["style"] == "night"  # inherited from the source render
+    assert render["stage"] == {"world": "world", "object": "isolate", "sound": "sound"}[kind]
+    assert started == [(job_id, render["id"], kind, PHOTO, "night", prompt)]
+
+
+def test_derive_validation(derive_job):
+    job_id, source, started = derive_job
+    assert _derive(job_id, source, "hologram").status_code == 400
+    r = _derive(job_id, source, "object", "   ")
+    assert r.status_code == 400 and "Name the object" in r.json()["detail"]
+    assert _derive(job_id, "nope", "world").status_code == 404
+    assert _derive("no-job", source, "world").status_code == 404
+    assert _derive(job_id, source, "sound", "x" * 501).status_code == 422
+    assert started == []
+
+
+def test_derive_needs_a_finished_photo(derive_job):
+    job_id, source, started = derive_job
+
+    async def mutate(**fields):
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            renders = [dict(r, **fields) if r["id"] == source else r for r in job.params["renders"]]
+            job.params = {**job.params, "renders": renders}
+            await session.commit()
+
+    asyncio.run(mutate(status="processing"))
+    assert _derive(job_id, source, "world").status_code == 400
+    asyncio.run(mutate(status="completed", kind="world"))  # cannot derive from a derived render
+    assert _derive(job_id, source, "world").status_code == 400
+    assert started == []
+
+
+@pytest.mark.parametrize("kind,config,missing", [
+    ("world", dict(fal_key="k"), "WORLD_LABS_API_KEY"),
+    ("object", dict(world_key="wl", azure_image="gpt-image-1"), "FAL_KEY (Hunyuan 3D)"),
+    ("sound", dict(world_key="wl", azure_image="gpt-image-1"), "FAL_KEY (ElevenLabs)"),
+])
+def test_derive_reports_missing_provider(derive_job, monkeypatch, kind, config, missing):
+    job_id, source, started = derive_job
+    _providers(monkeypatch, **config)
+    r = _derive(job_id, source, kind, "sofa")
+    assert r.status_code == 503 and missing in r.json()["detail"]
+    assert started == []
+
+
+def test_derive_shares_the_active_cap(derive_job, monkeypatch):
+    job_id, source, started = derive_job
+    monkeypatch.setattr(jobs_api.render_pipeline, "run_render", lambda *a: asyncio.sleep(0))
+    assert _derive(job_id, source, "sound").status_code == 202
+    assert _post(job_id).status_code == 202
+    assert _derive(job_id, source, "world").status_code == 429
+
+
+# Pipeline with faked providers
+
+
+def _derived_in_db(job_id, kind, prompt=""):
+    async def seed():
+        async with AsyncSessionLocal() as session:
+            job = await session.get(Job, job_id)
+            job.params = {**job.params, "renders": job.params["renders"] + [
+                render_pipeline.new_render("d1", kind, "night", prompt, "src")]}
+            await session.commit()
+
+    asyncio.run(seed())
+    return "d1"
+
+
+def test_pipeline_world(source_job, monkeypatch):
+    job_id, _ = source_job
+    seen = {}
+
+    async def generate_world(image, prompt="", name=""):
+        seen.update(image=image, prompt=prompt, name=name)
+        return {"spz": SPZ, "collider": GLB, "pano": None, "meta": {"flip_y": True, "ground_plane_offset": 0,
+                                                                   "metric_scale_factor": 1, "caption": "c"}}
+
+    monkeypatch.setattr(render_pipeline.worldlabs, "generate_world", generate_world)
+    rid = _derived_in_db(job_id, "world", "foggy")
+    asyncio.run(render_pipeline.run_derived(job_id, rid, "world", PHOTO, "night", "foggy"))
+    render = _render(asyncio.run(_job_params(job_id)), rid)
+    assert render["status"] == "completed" and render["world_meta"]["caption"] == "c"
+    assert asyncio.run(_file_bytes(render["world_spz_file_id"])) == SPZ
+    assert asyncio.run(_file_bytes(render["world_collider_file_id"])) == GLB
+    assert "world_pano_file_id" not in render
+    assert seen == {"image": PHOTO, "prompt": "foggy", "name": f"cadlift-{rid}"}
+
+
+def test_pipeline_object(source_job, monkeypatch):
+    job_id, _ = source_job
+    REFERENCE = b"reference-png"
+    seen = {}
+
+    async def edit_image(prompt, images):
+        seen.update(prompt=prompt, images=images)
+        return REFERENCE
+
+    async def image_to_3d(image):
+        seen["model_input"] = image
+        return GLB
+
+    monkeypatch.setattr(render_pipeline.fal, "edit_image", edit_image)
+    monkeypatch.setattr(render_pipeline.fal, "image_to_3d", image_to_3d)
+    rid = _derived_in_db(job_id, "object", "sofa")
+    asyncio.run(render_pipeline.run_derived(job_id, rid, "object", PHOTO, "night", " sofa "))
+    render = _render(asyncio.run(_job_params(job_id)), rid)
+    assert render["status"] == "completed"
+    assert asyncio.run(_file_bytes(render["image_file_id"])) == REFERENCE
+    assert asyncio.run(_file_bytes(render["model_file_id"])) == GLB
+    assert seen["prompt"].startswith("Isolate the sofa from this image") and seen["images"] == [PHOTO]
+    assert seen["model_input"] == REFERENCE
+    assert render["providers"] == {"image": "fal", "model": "fal"}
+
+
+@pytest.mark.parametrize("prompt,expected", [("", "crickets"), ("rain on a tin roof", "rain on a tin roof")])
+def test_pipeline_sound(source_job, monkeypatch, prompt, expected):
+    job_id, _ = source_job
+    seen = {}
+
+    async def sound_effect(text, loop=True, duration_seconds=10.0):
+        seen["text"] = text
+        return MP3
+
+    monkeypatch.setattr(render_pipeline.fal, "sound_effect", sound_effect)
+    rid = _derived_in_db(job_id, "sound", prompt)
+    asyncio.run(render_pipeline.run_derived(job_id, rid, "sound", PHOTO, "night", prompt))
+    render = _render(asyncio.run(_job_params(job_id)), rid)
+    assert render["status"] == "completed"
+    assert asyncio.run(_file_bytes(render["audio_file_id"])) == MP3
+    assert expected in seen["text"] and "No music" in seen["text"]
+
+
+def test_pipeline_derived_failure_is_recorded(source_job, monkeypatch):
+    job_id, _ = source_job
+
+    async def broken(*a, **k):
+        raise worldlabs.WorldLabsError("World Labs submit failed (402): no credits")
+
+    monkeypatch.setattr(render_pipeline.worldlabs, "generate_world", broken)
+    rid = _derived_in_db(job_id, "world")
+    asyncio.run(render_pipeline.run_derived(job_id, rid, "world", PHOTO, "night"))
+    render = _render(asyncio.run(_job_params(job_id)), rid)
+    assert render["status"] == "failed" and "no credits" in render["error"]
