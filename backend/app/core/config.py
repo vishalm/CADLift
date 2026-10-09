@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     fal_key: str | None = None
     fal_image_endpoint: str = "fal-ai/nano-banana-2/edit"
     fal_video_endpoint: str = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
+    fal_3d_endpoint: str = "fal-ai/hunyuan3d-v3/image-to-3d"  # 3D objects from a render
+    fal_sfx_endpoint: str = "fal-ai/elevenlabs/sound-effects/v2"  # ambient sound for a render
+    # World Labs Marble: explorable Gaussian splat worlds from a render (image-blaster's world model)
+    world_labs_api_key: str | None = None  # 3D worlds disabled if unset
+    world_labs_model: str = "marble-1.1"
     vision_api_url: str | None = None
     vision_api_key: str | None = None
     vision_timeout_seconds: float = 30.0

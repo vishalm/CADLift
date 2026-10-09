@@ -9,7 +9,7 @@ import base64
 import httpx
 
 from app.core.config import get_settings
-from app.services.media_poll import poll
+from app.services.media_poll import download as fetch_output, poll
 
 NAME = "fal"
 
@@ -67,11 +67,7 @@ async def run(endpoint: str, payload: dict, poll_seconds: float = 5.0) -> dict:
 
 
 async def download(url: str) -> bytes:
-    async with httpx.AsyncClient(timeout=180, follow_redirects=True) as client:
-        resp = await client.get(url)
-        if resp.status_code >= 400:
-            raise FalError(f"Download failed ({resp.status_code})")
-        return resp.content
+    return await fetch_output(url, FalError)
 
 
 async def edit_image(prompt: str, images: list[bytes]) -> bytes:
@@ -99,4 +95,32 @@ async def image_to_video(prompt: str, start: bytes, end: bytes | None = None, du
     url = (result.get("video") or {}).get("url")
     if not url:
         raise FalError("FAL returned no video")
+    return await download(url)
+
+
+async def image_to_3d(image: bytes, face_count: int = 50000) -> bytes:
+    """Hunyuan 3D: textured GLB of the single object in `image` (image-blaster's defaults)."""
+    result = await run(get_settings().fal_3d_endpoint, {
+        "input_image_url": data_uri(image),
+        "generate_type": "Normal",
+        "enable_pbr": True,
+        "face_count": face_count,
+    }, poll_seconds=10)
+    url = (result.get("model_glb") or {}).get("url") or ((result.get("model_urls") or {}).get("glb") or {}).get("url")
+    if not url:
+        raise FalError("FAL returned no 3D model")
+    return await download(url)
+
+
+async def sound_effect(text: str, loop: bool = True, duration_seconds: float = 10.0) -> bytes:
+    """ElevenLabs sound effect (MP3). Loops are left untrimmed so the seam stays seamless."""
+    result = await run(get_settings().fal_sfx_endpoint, {
+        "text": text,
+        "loop": loop,
+        "duration_seconds": duration_seconds,
+        "output_format": "mp3_44100_128",
+    }, poll_seconds=3)
+    url = (result.get("audio") or {}).get("url")
+    if not url:
+        raise FalError("FAL returned no audio")
     return await download(url)
