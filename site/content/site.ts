@@ -44,19 +44,56 @@ export const site = {
 
   sections: {
     transform: { index: '01', eyebrow: 'Convert' },
-    chat: { index: '02', eyebrow: 'Restyle' },
-    walk: { index: '03', eyebrow: 'Explore' },
-    inputs: { index: '04', eyebrow: 'Inputs' },
-    layers: { index: '05', eyebrow: 'Layers' },
-    export: { index: '06', eyebrow: 'Export' },
-    metrics: { index: '07', eyebrow: 'Speed' },
-    openSource: { index: '08', eyebrow: 'Open source' },
+    real: { index: '02', eyebrow: 'Real results' },
+    film: { index: '03', eyebrow: 'Showreel' },
+    chat: { index: '04', eyebrow: 'Restyle' },
+    walk: { index: '05', eyebrow: 'Explore' },
+    inputs: { index: '06', eyebrow: 'Inputs' },
+    layers: { index: '07', eyebrow: 'Layers' },
+    export: { index: '08', eyebrow: 'Export' },
+    metrics: { index: '09', eyebrow: 'Speed' },
+    openSource: { index: '10', eyebrow: 'Open source' },
   },
 
   transform: {
     headline: 'Flat to 3D in 5 seconds.',
     steps: ['Upload', 'Extrude', 'Explore'],
     unit: 's',
+  },
+
+  // Real sample plans and their 3D results (site/scripts/build-media.sh builds the images).
+  real: {
+    headline: 'Real plans. Real results.',
+    line: 'Move across any plan to reveal the 3D model inside.',
+    before: '2D plan',
+    after: '3D model',
+    hint: 'Hover or drag to compare',
+    sliderLabel: 'Compare the 2D plan with its 3D model',
+    prev: 'Previous project',
+    next: 'Next project',
+    slides: [
+      { key: 'villa', title: 'Family villa', meta: '127 m² · 5 rooms', plan: '/media/villa-plan.jpg', model: '/media/villa-model.jpg' },
+      { key: 'apartment', title: 'City apartment', meta: '1 bedroom · open kitchen', plan: '/media/apartment-plan.jpg', model: '/media/apartment-model.jpg' },
+      { key: 'sketch', title: 'Hand-drawn sketch', meta: 'Pencil notes, read as walls', plan: '/media/sketch-plan.jpg', model: '/media/sketch-model.jpg' },
+    ],
+    credit: 'Sample plans and captures from the FloorPlanTo3D project.',
+  },
+
+  film: {
+    headline: 'See it built.',
+    line: 'Real captures, from a paper sketch to furnished rooms.',
+    label: 'Showreel: floor plans turning into 3D rooms',
+    play: 'Play',
+    pause: 'Pause',
+    // Chapter start times in seconds (each shot is 2.9 s apart in film.mp4).
+    chapters: [
+      { at: 0, label: 'Sketch' },
+      { at: 5.8, label: 'Plan' },
+      { at: 8.7, label: '3D model' },
+      { at: 11.6, label: 'Rooms' },
+      { at: 20.3, label: 'Furnished' },
+    ],
+    hud: { source: 'Real capture', res: '1280 x 720 · 30 fps' },
   },
 
   chat: {

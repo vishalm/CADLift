@@ -10,6 +10,10 @@ const paths = {
     />
   ),
   arrowRight: <path d="M5 12h14M13 6l6 6-6 6" />,
+  arrowLeft: <path d="M19 12H5M11 18l-6-6 6-6" />,
+  play: <path d="M7 4.5v15l12-7.5z" />,
+  pause: <path d="M8 5v14M16 5v14" />,
+  compare: <path d="m9 7-5 5 5 5M15 7l5 5-5 5" />,
   chevronDown: <path d="m6 9 6 6 6-6" />,
   copy: (
     <>
