@@ -137,7 +137,11 @@ otherwise FAL (the same models image-blaster uses). So Azure photos plus FAL vid
 **From a finished photo** (buttons on its card), as image-blaster does:
 
 - **3D world**: World Labs Marble builds an explorable Gaussian splat world. Click **Explore world**
-  to walk through it (W A S D, Q / E, drag to look); download the `.spz`, collider mesh and panorama.
+  to walk through it: W A S D to move, drag to look. In **Walk** mode you stay at eye height on the
+  floor and walls stop you (it uses the world's collider mesh); **Fly** moves freely (Q / E for up
+  and down). Use the **3D objects** panel to place your 3D object renders in the world, then click
+  one to turn, resize, move or remove it; placements are saved. Download the `.spz`, collider mesh
+  and panorama.
 - **3D object**: name an object (e.g. sofa); it is isolated from the photo and modelled with
   Hunyuan 3D. View it in 3D or download the `.glb`.
 - **Ambient sound**: an ElevenLabs loop for the scene, which also plays inside the 3D world.

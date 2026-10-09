@@ -300,6 +300,10 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
     }
   };
 
+  const placeableObjects = history
+    .filter((r) => r.kind === 'object' && r.status === 'completed' && r.model_file_id)
+    .map((r) => ({ id: r.id, name: r.prompt || t('render.kind_object'), modelUrl: fileUrl(r.model_file_id as string) }));
+
   // The world plays the newest finished sound made from the same photo, if any.
   const worldSound = world
     ? renders.find((r) => r.kind === 'sound' && r.status === 'completed' && r.audio_file_id
@@ -404,6 +408,11 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
           colliderUrl={world.world_collider_file_id ? fileUrl(world.world_collider_file_id) : undefined}
           meta={world.world_meta}
           audioUrl={worldSound ? fileUrl(worldSound) : undefined}
+          objects={placeableObjects}
+          placements={world.placements ?? []}
+          onSavePlacements={async (placements) => {
+            await jobService.saveWorldPlacements(jobId, world.id, placements);
+          }}
           onClose={() => setWorld(null)}
         />
       )}

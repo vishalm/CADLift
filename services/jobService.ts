@@ -449,6 +449,19 @@ export const jobService = {
     return job;
   },
 
+  /** Replace the 3D objects placed into a finished world. */
+  async saveWorldPlacements(jobId: string, worldRenderId: string, placements: WorldPlacement[]): Promise<JobRecord> {
+    const response = await apiFetch(`/api/v1/jobs/${jobId}/renders/${worldRenderId}/placements`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ placements }),
+    });
+    const payload = (await response.json()) as { job: ApiJobEntity };
+    const job = adaptApiJob(payload.job);
+    notify(job.job_id);
+    return job;
+  },
+
   /** Delete a finished or failed render and its files. */
   async deleteRender(jobId: string, renderId: string): Promise<JobRecord> {
     const response = await apiFetch(`/api/v1/jobs/${jobId}/renders/${renderId}`, { method: 'DELETE' });
@@ -501,6 +514,16 @@ export interface RenderEntry {
   world_meta?: { flip_y?: boolean; ground_plane_offset?: number; metric_scale_factor?: number; caption?: string };
   model_file_id?: string;
   audio_file_id?: string;
+  placements?: WorldPlacement[];
+}
+
+/** A 3D object render placed into a world (metres, radians). */
+export interface WorldPlacement {
+  id: string;
+  object_render_id: string;
+  position: [number, number, number];
+  rotation_y: number;
+  scale: number;
 }
 
 export const fileUrl = (fileId: string) => `${API_BASE_URL}/api/v1/files/${fileId}`;

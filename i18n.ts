@@ -581,7 +581,18 @@ const resources = {
         soundOff: 'Mute',
         walk: 'Walk',
         fly: 'Fly',
-        controlsWalk: 'W A S D: walk, drag: look around, Shift: faster. Walls and floors are solid.'
+        controlsWalk: 'W A S D: walk, drag: look around, Shift: faster. Walls and floors are solid.',
+        objects: '3D objects',
+        place: 'Place',
+        placeHint: 'Pick a 3D object and place it in front of you.',
+        selectHint: 'Click a placed object to select it.',
+        turnLeft: 'Turn left',
+        turnRight: 'Turn right',
+        smaller: 'Smaller',
+        bigger: 'Bigger',
+        moveHere: 'Move here',
+        remove: 'Remove',
+        saveFailed: 'Could not save: {{error}}'
       },
       about: {
         badge: 'Free & Open Source Software',
@@ -1194,7 +1205,18 @@ const resources = {
         soundOff: 'Stumm',
         walk: 'Gehen',
         fly: 'Fliegen',
-        controlsWalk: 'W A S D: gehen, Ziehen: umsehen, Shift: schneller. Wände und Böden sind fest.'
+        controlsWalk: 'W A S D: gehen, Ziehen: umsehen, Shift: schneller. Wände und Böden sind fest.',
+        objects: '3D-Objekte',
+        place: 'Platzieren',
+        placeHint: 'Wählen Sie ein 3D-Objekt und platzieren Sie es vor sich.',
+        selectHint: 'Klicken Sie auf ein platziertes Objekt, um es auszuwählen.',
+        turnLeft: 'Links drehen',
+        turnRight: 'Rechts drehen',
+        smaller: 'Kleiner',
+        bigger: 'Größer',
+        moveHere: 'Hierher',
+        remove: 'Entfernen',
+        saveFailed: 'Speichern fehlgeschlagen: {{error}}'
       },
       about: {
         badge: 'KI-gestützte 3D-Generierung',
