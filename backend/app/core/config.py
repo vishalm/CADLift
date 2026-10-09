@@ -1,6 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
-from typing import List
+from typing import List, Literal
 
 
 class Settings(BaseSettings):
@@ -27,6 +27,15 @@ class Settings(BaseSettings):
     azure_vision_deployment_name: str | None = None  # blueprint analysis; defaults to azure_deployment_name
     azure_image_deployment_name: str | None = None  # e.g. gpt-image-1; image path disabled if unset
     llm_timeout_seconds: float = 30.0
+    # Render studio: photoreal images and videos of a model view. Photos and videos each use Azure OpenAI
+    # when its deployment is set (AZURE_IMAGE_DEPLOYMENT_NAME / AZURE_VIDEO_DEPLOYMENT_NAME), else FAL.
+    render_provider: Literal["auto", "azure", "fal"] = "auto"  # force one provider instead of auto
+    render_timeout_seconds: float = 900.0  # video generation takes minutes
+    azure_video_deployment_name: str | None = None  # e.g. sora-2; Azure video disabled if unset
+    # FAL (same provider and models as image-blaster)
+    fal_key: str | None = None
+    fal_image_endpoint: str = "fal-ai/nano-banana-2/edit"
+    fal_video_endpoint: str = "fal-ai/kling-video/v2.5-turbo/pro/image-to-video"
     vision_api_url: str | None = None
     vision_api_key: str | None = None
     vision_timeout_seconds: float = 30.0

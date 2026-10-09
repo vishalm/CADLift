@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -21,6 +23,8 @@ from app.services.storage import storage_service
 from app.services.llm import llm_service
 from app.core.errors import CADLiftError
 from app.pipelines.pdf_plan import apply_changes, pdf_to_glb, save_plan_outputs
+from app.pipelines import render as render_pipeline
+from app.services.storage import save_job_file
 
 logger = get_logger("cadlift.jobs")
 settings = get_settings()
@@ -405,3 +409,79 @@ async def undo_plan_chat(
     await session.commit()
     await session.refresh(job)
     return {"job": serialize_job(job)}
+
+
+# ---- Render studio: photoreal images and videos of a model view -------------------
+
+MAX_RENDERS = 30
+MAX_ACTIVE_RENDERS = 2  # FAL video calls are slow and paid: cap in-flight work per job
+MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024
+RENDER_STALE_AFTER = timedelta(minutes=30)
+_render_tasks: set[asyncio.Task] = set()  # strong refs so running tasks are not garbage collected
+
+
+def _sweep_stale_renders(renders: list[dict]) -> list[dict]:
+    """Fail renders stuck in processing (e.g. the server restarted mid-render)."""
+    cutoff = datetime.now(timezone.utc) - RENDER_STALE_AFTER
+    swept = []
+    for render in renders:
+        render = dict(render)
+        created = datetime.fromisoformat(render["created_at"]) if render.get("created_at") else cutoff
+        if render.get("status") == "processing" and created < cutoff:
+            render.update(status="failed", stage=None, error="Render was interrupted. Please try again.")
+        swept.append(render)
+    return swept
+
+
+@router.post("/{job_id}/renders", status_code=status.HTTP_202_ACCEPTED)
+async def create_render(
+    job_id: str,
+    snapshot: UploadFile = File(...),
+    kind: str = Form("image"),
+    style: str = Form("daylight"),
+    prompt: str = Form("", max_length=500),
+    session: AsyncSession = Depends(deps.get_db),
+    user: User = Depends(deps.get_current_user),
+):
+    """Start a photoreal image, orbit video or construction timelapse from a viewer snapshot."""
+    job = await _owned_job(session, job_id, user)
+    if kind not in render_pipeline.KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(render_pipeline.KINDS)}")
+    if render_pipeline.image_backend() is None:
+        raise HTTPException(status_code=503, detail=(
+            "Render studio needs AZURE_IMAGE_DEPLOYMENT_NAME (Azure OpenAI gpt-image-1) or FAL_KEY in backend/.env"))
+    if kind != "image" and render_pipeline.video_backend() is None:
+        raise HTTPException(status_code=503, detail=(
+            "Videos need AZURE_VIDEO_DEPLOYMENT_NAME (Azure OpenAI Sora 2) or FAL_KEY in backend/.env"))
+    if style not in render_pipeline.STYLES:
+        raise HTTPException(status_code=400, detail=f"style must be one of {', '.join(render_pipeline.STYLES)}")
+
+    data = await snapshot.read(MAX_SNAPSHOT_BYTES + 1)
+    if len(data) > MAX_SNAPSHOT_BYTES:
+        raise HTTPException(status_code=400, detail="Snapshot is larger than 10 MB")
+    is_valid, error_msg = validate_image_file(data, snapshot.filename or "snapshot.png")
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=f"Invalid snapshot: {error_msg}")
+
+    params = dict(job.params or {})
+    renders = _sweep_stale_renders(list(params.get("renders") or []))
+    if sum(r.get("status") == "processing" for r in renders) >= MAX_ACTIVE_RENDERS:
+        raise HTTPException(status_code=429, detail="Two renders are already running. Wait for one to finish.")
+
+    render = render_pipeline.new_render(uuid4().hex[:12], kind, style, prompt.strip())
+    snapshot_file = save_job_file(session, job, data, "render", f"render_{render['id']}_snapshot.png", "image/png")
+    await session.flush()
+    render["snapshot_file_id"] = snapshot_file.id
+    # ponytail: renders share job.params with plan chat; a chat edit landing mid-render can drop a render
+    # update (last write wins). Move renders to their own table if that ever bites.
+    # Trimmed renders keep their files on disk until the job is deleted (same as plan versions).
+    params["renders"] = (renders + [render])[-MAX_RENDERS:]
+    job.params = params
+    await session.commit()
+    await session.refresh(job)
+
+    task = asyncio.create_task(render_pipeline.run_render(job.id, render["id"], data, kind, style, render["prompt"]))
+    _render_tasks.add(task)
+    task.add_done_callback(_render_tasks.discard)
+    logger.info("render_started", job_id=job_id, render_id=render["id"], kind=kind, style=style)
+    return {"render": render, "job": serialize_job(job)}
