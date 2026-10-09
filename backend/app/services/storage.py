@@ -53,3 +53,14 @@ class StorageService:
 
 
 storage_service = StorageService(settings.storage_path)
+
+
+def save_job_file(session, job, data: bytes, role: str, filename: str, mime: str):
+    """Write bytes under the job's storage folder and add the File row; returns the (unflushed) record."""
+    from app.models import File as FileModel
+
+    key, size = storage_service.save_bytes(data, role=role, job_id=job.id, filename=filename)
+    record = FileModel(user_id=job.user_id, job_id=job.id, role=role, storage_key=key,
+                       original_name=filename, mime_type=mime, size_bytes=size)
+    session.add(record)
+    return record

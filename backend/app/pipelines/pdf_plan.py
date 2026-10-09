@@ -499,18 +499,11 @@ def apply_changes(spec: dict, changes: list) -> tuple[dict, list[str], list[str]
 
 def save_plan_outputs(session, job, glb_bytes: bytes, meta: dict, version: int):
     """Store a plan version's GLB + metadata as job files; returns the GLB file record."""
-    from app.models import File as FileModel
-    from app.services.storage import storage_service
+    from app.services.storage import save_job_file
 
-    def save(data: bytes, role: str, filename: str, mime: str) -> FileModel:
-        key, size = storage_service.save_bytes(data, role=role, job_id=job.id, filename=filename)
-        f = FileModel(user_id=job.user_id, job_id=job.id, role=role, storage_key=key,
-                      original_name=filename, mime_type=mime, size_bytes=size)
-        session.add(f)
-        return f
-
-    save(json.dumps(meta, indent=2).encode("utf-8"), "output_metadata", f"plan_model_v{version}.json", "application/json")
-    return save(glb_bytes, "output", f"plan_model_v{version}.glb", "model/gltf-binary")
+    save_job_file(session, job, json.dumps(meta, indent=2).encode("utf-8"), "output_metadata",
+                  f"plan_model_v{version}.json", "application/json")
+    return save_job_file(session, job, glb_bytes, "output", f"plan_model_v{version}.glb", "model/gltf-binary")
 
 
 async def run(job, session, input_path: Path) -> None:
