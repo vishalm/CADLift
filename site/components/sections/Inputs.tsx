@@ -2,33 +2,22 @@
 
 import dynamic from 'next/dynamic';
 import { motion, useReducedMotion } from 'framer-motion';
-import { useEffect, useState, type PointerEvent, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { site } from '@/content/site';
 import Canvas3D from '@/components/three/Canvas3D';
 import BlueprintArt from '@/components/ui/BlueprintArt';
 import Reveal, { SectionTitle } from '@/components/ui/Reveal';
+import { useTilt } from '@/lib/useTilt';
 
 const MugScene = dynamic(() => import('@/components/three/MugScene'), { ssr: false });
 
-const MAX_TILT = 6;
-
 function Tile({ label, children, className = '', delay = 0 }: { label: string; children: ReactNode; className?: string; delay?: number }) {
-  const reduced = useReducedMotion();
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
-  const onMove = (e: PointerEvent<HTMLDivElement>) => {
-    if (reduced || e.pointerType !== 'mouse') return;
-    const r = e.currentTarget.getBoundingClientRect();
-    e.currentTarget.style.setProperty('--mx', `${e.clientX - r.left}px`);
-    e.currentTarget.style.setProperty('--my', `${e.clientY - r.top}px`);
-    setTilt({ x: ((e.clientY - r.top) / r.height - 0.5) * -2 * MAX_TILT, y: ((e.clientX - r.left) / r.width - 0.5) * 2 * MAX_TILT });
-  };
+  const tilt = useTilt();
   return (
     <Reveal delay={delay} className={className}>
       <div
-        onPointerMove={onMove}
-        onPointerLeave={() => setTilt({ x: 0, y: 0 })}
-        style={{ transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)` }}
-        className="spotlight group relative h-full min-h-[260px] overflow-hidden rounded-3xl border border-white/10 bg-surface transition-[transform,border-color] duration-300 ease-out-expo hover:border-cyan/40"
+        {...tilt}
+        className="tilt spotlight group relative h-full min-h-[260px] overflow-hidden rounded-3xl border border-white/10 bg-surface transition-[transform,border-color] duration-300 ease-out-expo hover:border-cyan/40"
       >
         <div className="absolute inset-0">{children}</div>
         <span className="absolute bottom-5 left-5 rounded-full border border-white/15 bg-ink/70 px-3 py-1 text-xs font-semibold tracking-wide text-paper backdrop-blur">
