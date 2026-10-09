@@ -1,6 +1,13 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import logging
+import re
 from functools import lru_cache
 from typing import List, Literal
+
+from pydantic import model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Template values copied from docs, e.g. "<your fal key>": never real credentials or names.
+PLACEHOLDER = re.compile(r"^<[^>]*>$")
 
 
 class Settings(BaseSettings):
@@ -73,6 +80,20 @@ class Settings(BaseSettings):
     # - cadquery: B-Rep modeling with true curves (requires conda install)
     # - solidpython: Mesh-based modeling (fast, always available)
     cad_engine: str = "solidpython"
+
+    @model_validator(mode="after")
+    def _drop_placeholders(self) -> "Settings":
+        """Treat "<...>" template values as unset, so a half-edited .env never counts as configured."""
+        dropped = []
+        for name in type(self).model_fields:
+            value = getattr(self, name)
+            if isinstance(value, str) and PLACEHOLDER.match(value.strip()):
+                object.__setattr__(self, name, None)
+                dropped.append(name.upper())
+        if dropped:
+            logging.getLogger("cadlift.config").warning(
+                "Ignoring placeholder values in .env (replace them with real values): %s", ", ".join(dropped))
+        return self
 
     @property
     def cors_origins_list(self) -> List[str]:
