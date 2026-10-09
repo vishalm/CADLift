@@ -45,6 +45,13 @@ class StorageService:
     def resolve_path(self, storage_key: str) -> Path:
         return self.base_path / storage_key
 
+    def delete(self, storage_key: str) -> None:
+        """Remove a stored file; a missing file is fine. Refuses keys that escape the storage root."""
+        path = (self.base_path / storage_key).resolve()
+        if not path.is_relative_to(self.base_path.resolve()):
+            raise ValueError(f"Storage key outside storage root: {storage_key}")
+        path.unlink(missing_ok=True)
+
     def save_bytes(self, data: bytes, role: str, job_id: str, filename: str) -> tuple[str, int]:
         storage_key = f"{job_id}/{role}/{filename}"
         path = self._target_path(storage_key)
