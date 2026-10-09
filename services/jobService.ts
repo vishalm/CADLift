@@ -437,6 +437,18 @@ export const jobService = {
     return job;
   },
 
+  /** From a finished render's photo: a 3D world, a 3D object (prompt = object name) or an ambient sound loop. */
+  async deriveRender(jobId: string, renderId: string, kind: DerivedKind, prompt = ''): Promise<JobRecord> {
+    const form = new FormData();
+    form.append('kind', kind);
+    form.append('prompt', prompt);
+    const response = await apiFetch(`/api/v1/jobs/${jobId}/renders/${renderId}/derive`, { method: 'POST', body: form });
+    const payload = (await response.json()) as { job: ApiJobEntity };
+    const job = adaptApiJob(payload.job);
+    notify(job.job_id);
+    return job;
+  },
+
   /** Revert a PDF plan model to its previous version. */
   async undoPlan(jobId: string): Promise<JobRecord> {
     const response = await apiFetch(`/api/v1/jobs/${jobId}/chat/undo`, { method: 'POST' });
@@ -448,6 +460,8 @@ export const jobService = {
 };
 
 export type RenderKind = 'image' | 'video' | 'construction';
+/** Made from a finished render's photo: explorable world, 3D object model, ambient sound loop. */
+export type DerivedKind = 'world' | 'object' | 'sound';
 export type RenderStyle = 'daylight' | 'golden_hour' | 'night' | 'interior' | 'overcast';
 
 export interface RenderOptions {
@@ -459,17 +473,25 @@ export interface RenderOptions {
 /** One entry of job.params.renders, written by the backend render pipeline. */
 export interface RenderEntry {
   id: string;
-  kind: RenderKind;
+  kind: RenderKind | DerivedKind;
   style: RenderStyle;
   prompt: string;
   status: 'processing' | 'completed' | 'failed';
-  stage?: 'photo' | 'site' | 'video' | null;
+  stage?: 'photo' | 'site' | 'video' | 'world' | 'isolate' | 'model' | 'sound' | null;
   error?: string;
   created_at: string;
   snapshot_file_id?: string;
   image_file_id?: string;
   start_image_file_id?: string;
   video_file_id?: string;
+  /** Derived renders: the render whose photo they were made from. */
+  source_render_id?: string;
+  world_spz_file_id?: string;
+  world_collider_file_id?: string;
+  world_pano_file_id?: string;
+  world_meta?: { flip_y?: boolean; ground_plane_offset?: number; metric_scale_factor?: number; caption?: string };
+  model_file_id?: string;
+  audio_file_id?: string;
 }
 
 export const fileUrl = (fileId: string) => `${API_BASE_URL}/api/v1/files/${fileId}`;

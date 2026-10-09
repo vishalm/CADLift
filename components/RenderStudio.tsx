@@ -1,18 +1,32 @@
 /**
  * RenderStudio - side panel that turns the current 3D view into a photoreal image, an orbit
- * video, or a construction timelapse (empty site to finished building).
+ * video, or a construction timelapse (empty site to finished building). A finished render's
+ * photo can then become an explorable 3D world, a 3D object model, or an ambient sound loop.
  *
  * The user frames the shot in the viewer; "Render current view" captures it and posts it to the
- * backend, which runs FAL in the background. Results arrive through job polling (params.renders).
+ * backend, which runs the providers in the background. Results arrive through job polling
+ * (params.renders).
  */
 
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { apiErrorDetail, fileUrl, jobService, RenderEntry, RenderKind, RenderStyle } from '../services/jobService';
+import {
+  apiErrorDetail,
+  DerivedKind,
+  fileUrl,
+  jobService,
+  RenderEntry,
+  RenderKind,
+  RenderStyle,
+} from '../services/jobService';
+import Viewer3DModal from './Viewer3DModal';
+import WorldViewer from './WorldViewer';
 
 const CAPTURE_WIDTH = 1280;
 const CAPTURE_HEIGHT = 720;
+const MAX_RUNNING = 2; // mirrors MAX_ACTIVE_RENDERS in the jobs API
 const KINDS: RenderKind[] = ['image', 'video', 'construction'];
+const DERIVED: DerivedKind[] = ['world', 'object', 'sound'];
 const STYLES: RenderStyle[] = ['daylight', 'golden_hour', 'night', 'interior', 'overcast'];
 
 interface RenderStudioProps {
@@ -35,33 +49,110 @@ const svg = {
   'aria-hidden': true,
 };
 
-const KindIcon = ({ kind }: { kind: RenderKind }) => {
-  if (kind === 'image') {
-    return (
-      <svg {...svg}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
-    );
-  }
-  if (kind === 'video') {
-    return (
-      <svg {...svg}><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></svg>
-    );
-  }
-  return (
-    <svg {...svg}><path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6M12 2v3" /></svg>
-  );
+const KIND_ICONS: Record<RenderKind | DerivedKind, React.ReactNode> = {
+  image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></>,
+  video: <><rect x="2" y="6" width="14" height="12" rx="2" /><path d="m22 8-6 4 6 4V8z" /></>,
+  construction: <path d="M3 21h18M5 21V10l7-5 7 5v11M9 21v-6h6v6M12 2v3" />,
+  world: <><circle cx="12" cy="12" r="10" /><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20" /></>,
+  object: <><path d="m21 16-9 5-9-5V8l9-5 9 5z" /><path d="m3 8 9 5 9-5M12 13v8" /></>,
+  sound: <><path d="M11 5 6 9H2v6h4l5 4V5z" /><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14" /></>,
 };
+
+const KindIcon = ({ kind }: { kind: RenderKind | DerivedKind }) => <svg {...svg}>{KIND_ICONS[kind]}</svg>;
 
 const DownloadIcon = () => (
   <svg {...svg} width={14} height={14}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
 );
 
-const RenderCard: React.FC<{ render: RenderEntry }> = ({ render }) => {
+const chip = 'flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40';
+const primaryChip = 'flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-semibold';
+
+const isSourceKind = (kind: RenderEntry['kind']): kind is RenderKind => (KINDS as string[]).includes(kind);
+
+interface RenderCardProps {
+  render: RenderEntry;
+  /** Image to show when the render has none of its own (derived renders show their source photo). */
+  fallbackPreview?: string;
+  canStart: boolean;
+  onDerive: (render: RenderEntry, kind: DerivedKind, prompt: string) => Promise<void>;
+  onExplore: (render: RenderEntry) => void;
+  onViewModel: (render: RenderEntry) => void;
+}
+
+const DeriveActions: React.FC<Pick<RenderCardProps, 'render' | 'canStart' | 'onDerive'>> = ({ render, canStart, onDerive }) => {
   const { t } = useTranslation();
-  const preview = render.image_file_id ?? render.snapshot_file_id;
+  const [objectName, setObjectName] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  const derive = async (kind: DerivedKind, prompt = '') => {
+    setSending(true);
+    try {
+      await onDerive(render, kind, prompt);
+      setObjectName(null);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="pt-2 mt-1 border-t border-slate-200 dark:border-slate-700 space-y-1.5">
+      <p className="font-semibold">{t('render.deriveTitle')}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {DERIVED.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            disabled={!canStart || sending}
+            onClick={() => (kind === 'object' ? setObjectName((name) => (name === null ? '' : null)) : void derive(kind))}
+            aria-expanded={kind === 'object' ? objectName !== null : undefined}
+            title={t(`render.deriveHint_${kind}`)}
+            className={chip}
+          >
+            <KindIcon kind={kind} />
+            {t(`render.kind_${kind}`)}
+          </button>
+        ))}
+      </div>
+      {objectName !== null && (
+        <form
+          className="flex gap-1.5"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (objectName.trim()) void derive('object', objectName.trim());
+          }}
+        >
+          <label htmlFor={`object-${render.id}`} className="sr-only">{t('render.objectName')}</label>
+          <input
+            id={`object-${render.id}`}
+            value={objectName}
+            onChange={(e) => setObjectName(e.target.value)}
+            maxLength={120}
+            placeholder={t('render.objectPlaceholder')}
+            autoFocus
+            className="flex-1 min-w-0 px-2 py-1 rounded-md bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700"
+          />
+          <button type="submit" disabled={!canStart || sending || !objectName.trim()} className={`${primaryChip} disabled:opacity-40`}>
+            {t('render.objectCreate')}
+          </button>
+        </form>
+      )}
+    </div>
+  );
+};
+
+const RenderCard: React.FC<RenderCardProps> = ({ render, fallbackPreview, canStart, onDerive, onExplore, onViewModel }) => {
+  const { t } = useTranslation();
+  const preview = render.image_file_id ?? render.world_pano_file_id ?? render.snapshot_file_id ?? fallbackPreview;
+  const done = render.status === 'completed';
   const downloads: [string, string | undefined, string][] = [
-    [t('render.downloadImage'), render.image_file_id, 'png'],
+    [t(render.kind === 'object' ? 'render.downloadReference' : 'render.downloadImage'), render.image_file_id, 'png'],
     [t('render.downloadSite'), render.start_image_file_id, 'png'],
     [t('render.downloadVideo'), render.video_file_id, 'mp4'],
+    [t('render.downloadWorld'), render.world_spz_file_id, 'spz'],
+    [t('render.downloadCollider'), render.world_collider_file_id, 'glb'],
+    [t('render.downloadPano'), render.world_pano_file_id, 'png'],
+    [t('render.downloadModel'), render.model_file_id, 'glb'],
+    [t('render.downloadSound'), render.audio_file_id, 'mp3'],
   ];
 
   return (
@@ -81,7 +172,7 @@ const RenderCard: React.FC<{ render: RenderEntry }> = ({ render }) => {
           <img
             src={fileUrl(preview)}
             alt={t(`render.kind_${render.kind}`)}
-            className={`w-full h-full object-cover ${render.status === 'processing' && !render.image_file_id ? 'opacity-50 grayscale' : ''}`}
+            className={`w-full h-full object-cover ${!done && !render.image_file_id ? 'opacity-50 grayscale' : ''}`}
           />
         ) : null}
         {render.status === 'processing' && (
@@ -100,20 +191,33 @@ const RenderCard: React.FC<{ render: RenderEntry }> = ({ render }) => {
         {render.status === 'failed' && (
           <p role="alert" className="text-red-600 dark:text-red-400">{t('render.failed', { error: render.error ?? '' })}</p>
         )}
-        {render.status === 'completed' && (
+        {done && render.audio_file_id && (
+          <audio src={fileUrl(render.audio_file_id)} controls loop className="w-full h-8" aria-label={t('render.kind_sound')} />
+        )}
+        {done && (
           <div className="flex flex-wrap gap-2 pt-1">
+            {render.world_spz_file_id && (
+              <button type="button" onClick={() => onExplore(render)} className={primaryChip}>
+                <KindIcon kind="world" />
+                {t('render.exploreWorld')}
+              </button>
+            )}
+            {render.model_file_id && (
+              <button type="button" onClick={() => onViewModel(render)} className={primaryChip}>
+                <KindIcon kind="object" />
+                {t('render.viewModel')}
+              </button>
+            )}
             {downloads.filter(([, id]) => id).map(([label, id, ext]) => (
-              <a
-                key={label}
-                href={fileUrl(id as string)}
-                download={`render-${render.id}.${ext}`}
-                className="flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-              >
+              <a key={label} href={fileUrl(id as string)} download={`render-${render.id}.${ext}`} className={chip}>
                 <DownloadIcon />
                 {label}
               </a>
             ))}
           </div>
+        )}
+        {done && isSourceKind(render.kind) && render.image_file_id && (
+          <DeriveActions render={render} canStart={canStart} onDerive={onDerive} />
         )}
       </div>
     </li>
@@ -122,8 +226,11 @@ const RenderCard: React.FC<{ render: RenderEntry }> = ({ render }) => {
 
 const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) => {
   const { t } = useTranslation();
-  const renders = [...((params.renders ?? []) as RenderEntry[])].reverse();
+  const history = (params.renders ?? []) as RenderEntry[];
+  const renders = [...history].reverse();
+  const byId = new Map(history.map((r) => [r.id, r]));
   const running = renders.filter((r) => r.status === 'processing').length;
+  const canStart = running < MAX_RUNNING;
 
   const [kind, setKind] = useState<RenderKind>('image');
   const [style, setStyle] = useState<RenderStyle>('daylight');
@@ -131,6 +238,8 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [world, setWorld] = useState<RenderEntry | null>(null);
+  const [model, setModel] = useState<RenderEntry | null>(null);
 
   const start = async () => {
     if (busy) return;
@@ -152,6 +261,23 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
       setBusy(false);
     }
   };
+
+  const derive = async (source: RenderEntry, derivedKind: DerivedKind, derivedPrompt: string) => {
+    setError(null);
+    setNotice(null);
+    try {
+      await jobService.deriveRender(jobId, source.id, derivedKind, derivedPrompt);
+      setNotice(t(`render.started_${derivedKind}`));
+    } catch (err) {
+      setError(apiErrorDetail(err));
+    }
+  };
+
+  // The world plays the newest finished sound made from the same photo, if any.
+  const worldSound = world
+    ? renders.find((r) => r.kind === 'sound' && r.status === 'completed' && r.audio_file_id
+      && r.source_render_id === world.source_render_id)?.audio_file_id
+    : undefined;
 
   return (
     <div className="flex flex-col h-full bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
@@ -212,13 +338,13 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
         <button
           type="button"
           onClick={start}
-          disabled={busy || running >= 2}
+          disabled={busy || !canStart}
           className="w-full py-2.5 rounded-xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 text-sm font-semibold disabled:opacity-40"
         >
           {busy ? t('render.sending') : t('render.renderView')}
         </button>
         <div aria-live="polite" className="text-xs space-y-1">
-          {running >= 2 && <p className="text-amber-700 dark:text-amber-400">{t('render.busyLimit')}</p>}
+          {!canStart && <p className="text-amber-700 dark:text-amber-400">{t('render.busyLimit')}</p>}
           {notice && running > 0 && <p className="text-emerald-700 dark:text-emerald-400">{notice}</p>}
           {error && <p role="alert" className="text-red-600 dark:text-red-400">{error}</p>}
         </div>
@@ -229,10 +355,39 @@ const RenderStudio: React.FC<RenderStudioProps> = ({ jobId, params, capture }) =
           <p className="text-xs text-slate-500 dark:text-slate-400">{t('render.empty')}</p>
         ) : (
           <ul className="space-y-3">
-            {renders.map((r) => <RenderCard key={r.id} render={r} />)}
+            {renders.map((r) => (
+              <RenderCard
+                key={r.id}
+                render={r}
+                fallbackPreview={r.source_render_id ? byId.get(r.source_render_id)?.image_file_id : undefined}
+                canStart={canStart}
+                onDerive={derive}
+                onExplore={setWorld}
+                onViewModel={setModel}
+              />
+            ))}
           </ul>
         )}
       </div>
+
+      {world?.world_spz_file_id && (
+        <WorldViewer
+          spzUrl={fileUrl(world.world_spz_file_id)}
+          meta={world.world_meta}
+          audioUrl={worldSound ? fileUrl(worldSound) : undefined}
+          onClose={() => setWorld(null)}
+        />
+      )}
+      {model?.model_file_id && (
+        <Viewer3DModal
+          isOpen
+          onClose={() => setModel(null)}
+          modelUrl={fileUrl(model.model_file_id)}
+          fileName="object.glb"
+          title={model.prompt || t('render.kind_object')}
+          downloadUrl={fileUrl(model.model_file_id)}
+        />
+      )}
     </div>
   );
 };
