@@ -112,6 +112,8 @@ interface Viewer3DProps {
   onLoad?: () => void;
   /** Callback on load error */
   onError?: (error: Error) => void;
+  /** Set to a function that renders the current view to a PNG data URL while a model is shown, else null. */
+  captureRef?: React.MutableRefObject<((width: number, height: number) => string) | null>;
 }
 
 export const Viewer3D: React.FC<Viewer3DProps> = ({
@@ -126,6 +128,7 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({
   enableMeasurements = true,
   onLoad,
   onError,
+  captureRef,
 }) => {
   const { t } = useTranslation();
   const viewerContainerRef = useRef<HTMLDivElement>(null);
@@ -134,6 +137,16 @@ export const Viewer3D: React.FC<Viewer3DProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [flyMode, setFlyMode] = useState(true);
   useFlyControls(loading || error ? null : viewer, flyMode);
+
+  useEffect(() => {
+    if (!captureRef) return;
+    captureRef.current = viewer && !loading && !error
+      ? (w, h) => viewer.GetViewer().GetImageAsDataUrl(w, h, false)
+      : null;
+    return () => {
+      captureRef.current = null;
+    };
+  }, [captureRef, viewer, loading, error]);
 
   useEffect(() => {
     if (!viewerContainerRef.current) return;

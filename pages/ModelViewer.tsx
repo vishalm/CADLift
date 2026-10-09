@@ -2,7 +2,8 @@
  * ModelViewer - full-window 3D viewer for one job (/viewer/:jobId).
  *
  * The model fills the screen; a slim top bar offers back, browser full screen
- * (button or F key) and, for PDF plan models, the AI chat panel.
+ * (button or F key), the render studio (photoreal images and videos of the current view) and,
+ * for PDF plan models, the AI chat panel. One side panel shows at a time.
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -10,6 +11,7 @@ import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import Viewer3D from '../components/Viewer3D';
 import PlanChat from '../components/PlanChat';
+import RenderStudio from '../components/RenderStudio';
 import { useJobPollingState } from '../hooks/useJobPolling';
 
 const iconProps = {
@@ -36,6 +38,9 @@ const ShrinkIcon = () => (
 const ChatIcon = () => (
   <svg {...iconProps}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /></svg>
 );
+const CameraIcon = () => (
+  <svg {...iconProps}><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z" /><circle cx="12" cy="13" r="3" /></svg>
+);
 const DownloadIcon = () => (
   <svg {...iconProps}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" /></svg>
 );
@@ -50,11 +55,15 @@ const ModelViewer: React.FC = () => {
   const { job, loaded } = useJobPollingState(jobId, 2000);
   const rootRef = useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(() => typeof window !== 'undefined' && window.innerWidth >= 1024);
+  const [panel, setPanel] = useState<'chat' | 'render' | null>(
+    () => (typeof window !== 'undefined' && window.innerWidth >= 1024 ? 'chat' : null),
+  );
+  const captureRef = useRef<((width: number, height: number) => string) | null>(null);
 
   const glbUrl = job?.glb_download_url;
   const params = job?.metadata;
   const hasChat = !!params?.plan_spec;
+  const togglePanel = (next: 'chat' | 'render') => setPanel((open) => (open === next ? null : next));
 
   const toggleFullscreen = useCallback(() => {
     if (document.fullscreenElement) {
@@ -104,10 +113,16 @@ const ModelViewer: React.FC = () => {
               <span className="hidden md:inline">{t('viewer.download')}</span>
             </a>
           )}
+          {glbUrl && (
+            <button type="button" onClick={() => togglePanel('render')} aria-pressed={panel === 'render'} className={barButton}>
+              <CameraIcon />
+              <span className="hidden md:inline">{panel === 'render' ? t('viewer.hideRender') : t('viewer.showRender')}</span>
+            </button>
+          )}
           {hasChat && (
-            <button type="button" onClick={() => setChatOpen((open) => !open)} aria-pressed={chatOpen} className={barButton}>
+            <button type="button" onClick={() => togglePanel('chat')} aria-pressed={panel === 'chat'} className={barButton}>
               <ChatIcon />
-              <span className="hidden md:inline">{chatOpen ? t('viewer.hideChat') : t('viewer.showChat')}</span>
+              <span className="hidden md:inline">{panel === 'chat' ? t('viewer.hideChat') : t('viewer.showChat')}</span>
             </button>
           )}
           <button
@@ -125,7 +140,7 @@ const ModelViewer: React.FC = () => {
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 relative">
           {glbUrl ? (
-            <Viewer3D modelUrl={glbUrl} fileName="model.glb" width="100%" height="100%" backgroundColor="#eef1f5" />
+            <Viewer3D modelUrl={glbUrl} fileName="model.glb" width="100%" height="100%" backgroundColor="#eef1f5" captureRef={captureRef} />
           ) : (
             <div className="h-full flex flex-col items-center justify-center gap-4 px-6 text-center">
               {!loaded ? (
@@ -144,9 +159,13 @@ const ModelViewer: React.FC = () => {
             </div>
           )}
         </main>
-        {hasChat && chatOpen && params && (
+        {params && ((panel === 'chat' && hasChat) || (panel === 'render' && glbUrl)) && (
           <aside className="w-full max-w-[380px] shrink-0 border-l border-slate-200 dark:border-slate-800 flex flex-col min-h-0 max-sm:absolute max-sm:inset-y-12 max-sm:right-0 max-sm:z-10">
-            <PlanChat jobId={jobId} params={params} />
+            {panel === 'chat' ? (
+              <PlanChat jobId={jobId} params={params} />
+            ) : (
+              <RenderStudio jobId={jobId} params={params} capture={captureRef} />
+            )}
           </aside>
         )}
       </div>

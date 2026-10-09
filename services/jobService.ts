@@ -423,6 +423,20 @@ export const jobService = {
     return { reply: payload.reply, applied: payload.applied, skipped: payload.skipped, job };
   },
 
+  /** Start a photoreal image / orbit video / construction timelapse from a viewer snapshot (runs in background). */
+  async createRender(jobId: string, snapshot: Blob, options: RenderOptions): Promise<JobRecord> {
+    const form = new FormData();
+    form.append('snapshot', snapshot, 'view.png');
+    form.append('kind', options.kind);
+    form.append('style', options.style);
+    form.append('prompt', options.prompt ?? '');
+    const response = await apiFetch(`/api/v1/jobs/${jobId}/renders`, { method: 'POST', body: form });
+    const payload = (await response.json()) as { job: ApiJobEntity };
+    const job = adaptApiJob(payload.job);
+    notify(job.job_id);
+    return job;
+  },
+
   /** Revert a PDF plan model to its previous version. */
   async undoPlan(jobId: string): Promise<JobRecord> {
     const response = await apiFetch(`/api/v1/jobs/${jobId}/chat/undo`, { method: 'POST' });
@@ -432,6 +446,33 @@ export const jobService = {
     return job;
   },
 };
+
+export type RenderKind = 'image' | 'video' | 'construction';
+export type RenderStyle = 'daylight' | 'golden_hour' | 'night' | 'interior' | 'overcast';
+
+export interface RenderOptions {
+  kind: RenderKind;
+  style: RenderStyle;
+  prompt?: string;
+}
+
+/** One entry of job.params.renders, written by the backend render pipeline. */
+export interface RenderEntry {
+  id: string;
+  kind: RenderKind;
+  style: RenderStyle;
+  prompt: string;
+  status: 'processing' | 'completed' | 'failed';
+  stage?: 'photo' | 'site' | 'video' | null;
+  error?: string;
+  created_at: string;
+  snapshot_file_id?: string;
+  image_file_id?: string;
+  start_image_file_id?: string;
+  video_file_id?: string;
+}
+
+export const fileUrl = (fileId: string) => `${API_BASE_URL}/api/v1/files/${fileId}`;
 
 export interface PlanChatResult {
   reply: string;
